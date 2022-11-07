@@ -4,7 +4,6 @@
 #include <Wire.h>
 #include "DS3231.h"
 
-#define REGN 10
 #define PIN_RX_MODBUS                     	16
 #define PIN_TX_MODBUS                     	17
 #define PIN_INPUT_COUNTER                 	26    	//INPUT 8
@@ -17,13 +16,29 @@
 #define PIN_INPUT_RESET_SLAVE_ID          	36    	//INPUT 1
 #define PIN_OUTPUT_CHANGEMOLD_STATUS      	5    	//INPUT 1
 
+#define MODBUS_DATA_BUFF_SIZE               250
+#define TIME_COUNTER_MINIMUM                0
+#define SLAVE_ID_DEFAUT                     200
+#define DEBOUNCE_BUTTON_DEFAUT              500
+#define DEBOUNCE_INPUT_DEFAUT               500
+#define DEBOUNCE_COUNTER_DEFAUT             500
+#define IS_INSTALLED                        1
+#define NOT_INSTALLED                       0
+
 enum{
-	EEPROM_ADD_SLAVE_ID 	= 1,
-	EEPROM_ADD_BUTTON_DEBOUNCE,
-	EEPROM_ADD_INPUT_DEBOUNCE,
-	EEPROM_ADD_COUNTER_DEBOUNCE,
-	EEPROM_ADD_COUNTER_DEBOUNCE_LOW,
-	EEPROM_ADD_COUNTER_DEBOUNCE_HIGH
+    EEPROM_ADD_IS_SETUP_SLAVE_ID = 1,
+	EEPROM_ADD_SLAVE_ID,
+    EEPROM_ADD_IS_SETUP_BUTTON_DEBOUNCE,
+	EEPROM_ADD_BUTTON_DEBOUNCE_HIGH,
+    EEPROM_ADD_BUTTON_DEBOUNCE_LOW,
+    EEPROM_ADD_IS_SETUP_INPUT_DEBOUNCE,
+	EEPROM_ADD_INPUT_DEBOUNCE_HIGH,
+    EEPROM_ADD_INPUT_DEBOUNCE_LOW,
+    EEPROM_ADD_IS_SETUP_COUNTER_DEBOUNCE,
+	EEPROM_ADD_COUNTER_DEBOUNCE_HIGH,
+    EEPROM_ADD_COUNTER_DEBOUNCE_LOW,
+	// EEPROM_ADD_COUNTER_DEBOUNCE_LOW,
+	// EEPROM_ADD_COUNTER_DEBOUNCE_HIGH
 };
 
 enum{
@@ -41,8 +56,7 @@ enum{
 	REG_GET_COUNTER_DEBOUNCE_LOW,
 	REG_GET_COUNTER_DEBOUNCE_HIGH,
 
-	REG_SET_SLAVE_ID        				= 100,
-	REG_SET_SLAVE_ID_VALUE,    					
+	REG_SET_SLAVE_ID                        =100,    					
 	REG_SET_TIME,    										//0-none, 1 - time Epoch Unix, - 2 time year,hour
 	REG_SET_CURRENT_TIME_EPOCH,       			
 	REG_SET_CURRENT_YEAR,       					
@@ -70,20 +84,19 @@ enum{
 	REG_SYNC_TOTAL_TIME,
 	REG_SET_BUTTON_DEBOUNCE,
 	REG_SET_INPUT_DEBOUNCE,        		
-	REG_SET_COUNTER_DEBOUNCE,        	
-	REG_SET_COUNTER_DEBOUNCE_LOW,        
-	REG_SET_COUNTER_DEBOUNCE_HIGH,       
+	REG_SET_COUNTER_DEBOUNCE,
+    REG_RESET_ALL
 } ;
 
-
-#define MODBUS_DATA_BUFF_SIZE               250
-#define TIME_COUNTER_MINIMUM                0
-
-uint8_t slave_id = 1;
 ModbusRTU modBus;
+struct SetupSlave
+{
+    bool isSetupSlaveId = false;
+    uint8_t slaveId = SLAVE_ID_DEFAUT;
+} setupSlave;
 
-DS3231 ds3231_clock;
-RTCDateTime dt;
+// DS3231 ds3231_clock;
+// RTCDateTime dt;
 
 typedef enum{
     MACHINE_STATUS_NA = 0,
@@ -167,18 +180,6 @@ struct OEEVariables {
     MACHINE_STATUS  ePreviousMachineStatus = MACHINE_STATUS_NA;
 
 
-    bool bIsMachineStateChanged = false;                  /*!< Machine status has changed  */
-
-    bool bIsRunSwitchGPIOPresent = false;
-    bool bIsIdleSwitchGPIOPresent = false;
-    bool bIsErrorSwitchGPIOPresent = false;
-    bool bIsRestartSwitchGPIOPresent = false;
-    bool bIsStartChangeMoldSwitchGPIOPresent = false;
-    bool bIsStopChangeMoldSwitchGPIOPresent = false;
-    bool bIsBuzzerGPIOPresent = false;
-    bool bIsChangeMoldGPIOPresent = false;
-    bool bIsRelay3GPIOPresent = false;
-
     bool bIsRunSwitchGPIOStatus = false;
     bool bIsIdleSwitchGPIOStatus = false;
     bool bIsErrorSwitchGPIOStatus = false;
@@ -188,32 +189,128 @@ struct OEEVariables {
     bool bIsSyncActualWhenOffline = false;
     bool bIsSyncWorkingShiftTime = false;
     bool bIsSyncDataDisconnect = false;
+    // bool bIsSyncDataActual = false;
 
     uint16_t modbusData[MODBUS_DATA_BUFF_SIZE];
-    // CALLING_AGV  ePreviousCallingAGVOrderType = CALLING_AGV_NA;
-    // ORDER_TYPE_SELECT  ePreviousOrderTypeSelection = ORDER_TYPE_SELECT_NA;
-    int32_t timestamp_int32 = 0;
+    uint16_t ui16buttonDebounce  = DEBOUNCE_BUTTON_DEFAUT;
+    uint16_t ui16inputDebounce = DEBOUNCE_INPUT_DEFAUT;
+    uint16_t ui16CounterDebounce = DEBOUNCE_COUNTER_DEFAUT;
+
 } OEEVars;
 
 void loadDataBegin();
 void initModbus();
+void checkCommandModbus();
+void TaskReadInput(void *pvParameters);
+void TaskReadCounter(void *pvParameters);
 
 void loadDataBegin(){
-	slave_id = EEPROM.read(EEPROM_ADD_SLAVE_ID);
-	if(slave_id == 0 || slave_id == 255){
-		slave_id = 1;
-	}
+    if(EEPROM.read(EEPROM_ADD_IS_SETUP_SLAVE_ID) == IS_INSTALLED){
+        setupSlave.isSetupSlaveId = true;
+        setupSlave.slaveId = EEPROM.read(EEPROM_ADD_SLAVE_ID);
+    }
+    else{
+        setupSlave.slaveId = SLAVE_ID_DEFAUT;
+    }
+    if(EEPROM.read(EEPROM_ADD_IS_SETUP_BUTTON_DEBOUNCE) == IS_INSTALLED){
+        OEEVars.ui16buttonDebounce = EEPROM.read(EEPROM_ADD_BUTTON_DEBOUNCE_HIGH);
+        OEEVars.ui16buttonDebounce = (OEEVars.ui16buttonDebounce << 8) | EEPROM.read(EEPROM_ADD_BUTTON_DEBOUNCE_LOW);
+    }
+    if(EEPROM.read(EEPROM_ADD_IS_SETUP_INPUT_DEBOUNCE) == IS_INSTALLED){
+        OEEVars.ui16inputDebounce = EEPROM.read(EEPROM_ADD_INPUT_DEBOUNCE_HIGH);
+        OEEVars.ui16inputDebounce = (OEEVars.ui16inputDebounce << 8) | EEPROM.read(EEPROM_ADD_INPUT_DEBOUNCE_LOW);
+    }
+    if(EEPROM.read(EEPROM_ADD_IS_SETUP_COUNTER_DEBOUNCE) == IS_INSTALLED){
+        OEEVars.ui16CounterDebounce = EEPROM.read(EEPROM_ADD_IS_SETUP_COUNTER_DEBOUNCE);
+        OEEVars.ui16CounterDebounce = (OEEVars.ui16CounterDebounce << 8) | EEPROM.read(EEPROM_ADD_IS_SETUP_COUNTER_DEBOUNCE);
+    }
 }
 void initModbus(){
-	modBus.slave(slave_id);
-	modBus.addHreg(REGN);
-	modBus.Hreg(REGN, 100);
+	modBus.slave(setupSlave.slaveId);
+    for(int i = 0; i < MODBUS_DATA_BUFF_SIZE; i++){
+        modBus.addHreg(i);
+	    modBus.Hreg(i, 0);
+    }
+	modBus.Hreg(REG_SET_SLAVE_ID, setupSlave.slaveId);
+    modBus.Hreg(REG_SET_BUTTON_DEBOUNCE, OEEVars.ui16buttonDebounce);
+    modBus.Hreg(REG_SET_INPUT_DEBOUNCE, OEEVars.ui16inputDebounce);
+    modBus.Hreg(REG_SET_COUNTER_DEBOUNCE, OEEVars.ui16CounterDebounce);
 }
+
+void checkCommandModbus(){
+    if(setupSlave.slaveId != modBus.Hreg(REG_SET_SLAVE_ID)){
+        setupSlave.slaveId = modBus.Hreg(REG_SET_SLAVE_ID);
+        modBus.slave(setupSlave.slaveId);
+        EEPROM.write(EEPROM_ADD_IS_SETUP_SLAVE_ID, IS_INSTALLED);
+        EEPROM.write(EEPROM_ADD_SLAVE_ID, setupSlave.slaveId);
+        EEPROM.commit();
+    }
+    if(OEEVars.ui16buttonDebounce != modBus.Hreg(REG_SET_BUTTON_DEBOUNCE)){
+        OEEVars.ui16buttonDebounce = modBus.Hreg(REG_SET_BUTTON_DEBOUNCE);
+        EEPROM.write(EEPROM_ADD_IS_SETUP_BUTTON_DEBOUNCE, IS_INSTALLED);
+        EEPROM.write(EEPROM_ADD_BUTTON_DEBOUNCE_HIGH, uint8_t(OEEVars.ui16buttonDebounce >> 8));
+        EEPROM.write(EEPROM_ADD_BUTTON_DEBOUNCE_LOW, uint8_t(OEEVars.ui16buttonDebounce));
+        EEPROM.commit();
+    }
+    if(OEEVars.ui16inputDebounce != modBus.Hreg(REG_SET_INPUT_DEBOUNCE)){
+        OEEVars.ui16inputDebounce = modBus.Hreg(REG_SET_INPUT_DEBOUNCE);
+        EEPROM.write(EEPROM_ADD_IS_SETUP_INPUT_DEBOUNCE, IS_INSTALLED);
+        EEPROM.write(EEPROM_ADD_INPUT_DEBOUNCE_HIGH, uint8_t(OEEVars.ui16inputDebounce >> 8));
+        EEPROM.write(EEPROM_ADD_INPUT_DEBOUNCE_LOW, uint8_t(OEEVars.ui16inputDebounce));
+        EEPROM.commit();
+    }
+    if(OEEVars.ui16CounterDebounce != modBus.Hreg(REG_SET_COUNTER_DEBOUNCE)){
+        OEEVars.ui16CounterDebounce = modBus.Hreg(REG_SET_COUNTER_DEBOUNCE);
+        EEPROM.write(EEPROM_ADD_IS_SETUP_COUNTER_DEBOUNCE, IS_INSTALLED);
+        EEPROM.write(EEPROM_ADD_COUNTER_DEBOUNCE_HIGH, uint8_t(OEEVars.ui16CounterDebounce >> 8));
+        EEPROM.write(EEPROM_ADD_COUNTER_DEBOUNCE_LOW, uint8_t(OEEVars.ui16CounterDebounce));
+        EEPROM.commit();
+    }
+    if(modBus.Hreg(REG_RESET_ALL) == IS_INSTALLED){
+        modBus.Hreg(REG_RESET_ALL, NOT_INSTALLED);
+        EEPROM.write(EEPROM_ADD_IS_SETUP_SLAVE_ID, NOT_INSTALLED);
+        EEPROM.write(EEPROM_ADD_SLAVE_ID, SLAVE_ID_DEFAUT);
+        EEPROM.write(EEPROM_ADD_IS_SETUP_BUTTON_DEBOUNCE, NOT_INSTALLED);
+        EEPROM.write(EEPROM_ADD_BUTTON_DEBOUNCE_HIGH, uint8_t(DEBOUNCE_BUTTON_DEFAUT >> 8));
+        EEPROM.write(EEPROM_ADD_BUTTON_DEBOUNCE_LOW, uint8_t(DEBOUNCE_BUTTON_DEFAUT));
+
+        EEPROM.write(EEPROM_ADD_IS_SETUP_INPUT_DEBOUNCE, IS_INSTALLED);
+        EEPROM.write(EEPROM_ADD_INPUT_DEBOUNCE_HIGH, uint8_t(DEBOUNCE_INPUT_DEFAUT >> 8));
+        EEPROM.write(EEPROM_ADD_INPUT_DEBOUNCE_LOW, uint8_t(DEBOUNCE_INPUT_DEFAUT));
+
+        EEPROM.write(EEPROM_ADD_IS_SETUP_COUNTER_DEBOUNCE, IS_INSTALLED);
+        EEPROM.write(EEPROM_ADD_COUNTER_DEBOUNCE_HIGH, uint8_t(DEBOUNCE_COUNTER_DEFAUT >> 8));
+        EEPROM.write(EEPROM_ADD_COUNTER_DEBOUNCE_LOW, uint8_t(DEBOUNCE_COUNTER_DEFAUT));
+        EEPROM.commit();
+    }
+}
+
+void TaskReadInput(void *pvParameters){
+    for(;;){
+
+    }
+}
+
+void TaskReadCounter(void *pvParameters){
+    for(;;){
+
+    }
+}
+
 
 void setup() {
 	Serial.begin(115200, SERIAL_8N1);
 	Serial1.begin(9600, SERIAL_8N1, PIN_RX_MODBUS, PIN_TX_MODBUS);
 	EEPROM.begin(512);
+    pinMode(PIN_INPUT_COUNTER, INPUT);
+    pinMode(PIN_INPUT_RUN_STATUS, INPUT);
+    pinMode(PIN_INPUT_IDLE_STATUS, INPUT);
+    pinMode(PIN_INPUT_ERROR_STATUS, INPUT);
+    pinMode(PIN_INPUT_RESET_MC, INPUT);
+    pinMode(PIN_INPUT_START_CHANGE_MOLD, INPUT);
+    pinMode(PIN_INPUT_STOP_CHANGE_MOLD, INPUT);
+    pinMode(PIN_INPUT_RESET_SLAVE_ID, INPUT);
+    pinMode(PIN_OUTPUT_CHANGEMOLD_STATUS, OUTPUT);
 #if defined(ESP32) || defined(ESP8266)
 	modBus.begin(&Serial1);
 #else
@@ -222,13 +319,33 @@ void setup() {
 	modBus.setBaudrate(9600);
 #endif
 
-	loadDataBegin();
 	initModbus();
-	ds3231_clock.begin();
+	loadDataBegin();
+	// ds3231_clock.begin();
+
+    xTaskCreatePinnedToCore(
+    TaskReadInput,    /* Function to implement the task */
+    "TaskReadInput",  /* Name of the task */
+    4096,             /* Stack size in words */
+    NULL,             /* Task input parameter */
+    0,                /* Priority of the task */
+    NULL,             /* Task handle. */
+    0);               /* Core where the task should run */
+
+    xTaskCreatePinnedToCore(
+    TaskReadCounter,    /* Function to implement the task */
+    "OEEDefaultTask",  /* Name of the task */
+    4096,             /* Stack size in words */
+    NULL,             /* Task input parameter */
+    0,                /* Priority of the task */
+    NULL,             /* Task handle. */
+    0);               /* Core where the task should run */
   
 }
 
 void loop() {
+    checkCommandModbus();
 	modBus.task();
+    vTaskDelay(100/ portTICK_PERIOD_MS);
 	yield();
 }
