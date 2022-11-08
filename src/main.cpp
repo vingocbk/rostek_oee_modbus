@@ -14,7 +14,7 @@
 #define PIN_INPUT_START_CHANGE_MOLD       	34    	//INPUT 3
 #define PIN_INPUT_STOP_CHANGE_MOLD        	39    	//INPUT 2
 #define PIN_INPUT_RESET_SLAVE_ID          	36    	//INPUT 1
-#define PIN_OUTPUT_CHANGEMOLD_STATUS      	5    	//INPUT 1
+#define PIN_OUTPUT_CHANGEMOLD_STATUS      	5    	//OUTPUT 1
 
 #define MODBUS_DATA_BUFF_SIZE               250
 #define TIME_COUNTER_MINIMUM                0
@@ -78,14 +78,21 @@ enum{
 	REG_SET_WORKING_SHIFT_2_END_HOUR,
 	REG_SET_WORKING_SHIFT_2_END_MINUTE,
 	REG_SET_WORKING_SHIFT_2_END_SECOND,
+    REG_SYNC_DATA,
 	REG_SYNC_ACTUAL,
-	REG_SYNC_RUNNING_TIME,
+	REG_SYNC_RUNNING_TIME_HIGH,
+    REG_SYNC_RUNNING_TIME_LOW,
 	REG_SYNC_DONE_CHANGE_MOLD,
-	REG_SYNC_TOTAL_TIME,
+	REG_SYNC_TOTAL_TIME_HIGH,
+    REG_SYNC_TOTAL_TIME_LOW,
 	REG_SET_BUTTON_DEBOUNCE,
 	REG_SET_INPUT_DEBOUNCE,        		
 	REG_SET_COUNTER_DEBOUNCE,
-    REG_RESET_ALL
+    REG_RESET_ALL,
+    REG_ACTUAL,
+    REG_RUNNING_TIME,
+    REG_MC_STATUS,
+    REG_TOTAL_TIME
 } ;
 
 ModbusRTU modBus;
@@ -115,7 +122,7 @@ struct SyncData
 struct OEEVariables {
     //save data
     int32_t i32RunningTimeCounter = TIME_COUNTER_MINIMUM;             /*!< Total Runningtime second counter */
-    int32_t i32SyncOffsetRunningTimeCounter = TIME_COUNTER_MINIMUM;             /*!< Total Offset Runningtime second counter */
+    int32_t i32SyncRunningTimeCounter = TIME_COUNTER_MINIMUM;             /*!< Total Offset Runningtime second counter */
     int32_t i32RunningTimePrevious = TIME_COUNTER_MINIMUM;             /*!< Total Runningtime second counter */
     int32_t i32PartialRunningTimeCounter = TIME_COUNTER_MINIMUM;             /*!< Total Runningtime second counter */
     //save data
@@ -134,14 +141,15 @@ struct OEEVariables {
     int32_t i32MachineErrorDownTimePrevious = TIME_COUNTER_MINIMUM;     /*!< Machine Error Downtime second previous  */
     int32_t i32OthersDownTimePrevious = TIME_COUNTER_MINIMUM;           /*!< Other Reason Downtime second previous  */
 
-    int32_t i32SyncOffsetUpTime = TIME_COUNTER_MINIMUM;
+    int32_t i32SyncUpTime = TIME_COUNTER_MINIMUM;
 
     uint16_t ui16ProductCounter = 0;
-    uint16_t ui16SyncOffsetProductCounter = 0;
+    uint16_t ui16SyncProductCounter = 0;
     uint16_t ui16ProductCounterDaily = 0;
     int32_t i32ActualProduct = 0;   //save data
     int32_t i32TargetProduct = 0;   //save data
-    int16_t i16RunningNumber = 0;   //number of done change mold
+    int16_t i16DoneChangeMold = 0;   //number of done change mold
+    int16_t i16SyncDoneChangeMold = 0;   //sync number of done change mold
 
     int32_t i32MPTProductInput = 0;
     int32_t i32NGProductInput = 0;
@@ -201,6 +209,8 @@ struct OEEVariables {
 void loadDataBegin();
 void initModbus();
 void checkCommandModbus();
+void resetOEE();
+uint32_t getUpTime();
 void TaskReadInput(void *pvParameters);
 void TaskReadCounter(void *pvParameters);
 
@@ -268,32 +278,146 @@ void checkCommandModbus(){
     }
     if(modBus.Hreg(REG_RESET_ALL) == IS_INSTALLED){
         modBus.Hreg(REG_RESET_ALL, NOT_INSTALLED);
-        EEPROM.write(EEPROM_ADD_IS_SETUP_SLAVE_ID, NOT_INSTALLED);
-        EEPROM.write(EEPROM_ADD_SLAVE_ID, SLAVE_ID_DEFAUT);
+        // EEPROM.write(EEPROM_ADD_IS_SETUP_SLAVE_ID, NOT_INSTALLED);
+        // EEPROM.write(EEPROM_ADD_SLAVE_ID, SLAVE_ID_DEFAUT);
+
         EEPROM.write(EEPROM_ADD_IS_SETUP_BUTTON_DEBOUNCE, NOT_INSTALLED);
+        OEEVars.ui16buttonDebounce = DEBOUNCE_BUTTON_DEFAUT;
+        modBus.Hreg(REG_SET_BUTTON_DEBOUNCE, OEEVars.ui16buttonDebounce);
         EEPROM.write(EEPROM_ADD_BUTTON_DEBOUNCE_HIGH, uint8_t(DEBOUNCE_BUTTON_DEFAUT >> 8));
         EEPROM.write(EEPROM_ADD_BUTTON_DEBOUNCE_LOW, uint8_t(DEBOUNCE_BUTTON_DEFAUT));
 
         EEPROM.write(EEPROM_ADD_IS_SETUP_INPUT_DEBOUNCE, IS_INSTALLED);
+        OEEVars.ui16inputDebounce = DEBOUNCE_INPUT_DEFAUT;
+        modBus.Hreg(REG_SET_INPUT_DEBOUNCE, OEEVars.ui16inputDebounce);
         EEPROM.write(EEPROM_ADD_INPUT_DEBOUNCE_HIGH, uint8_t(DEBOUNCE_INPUT_DEFAUT >> 8));
         EEPROM.write(EEPROM_ADD_INPUT_DEBOUNCE_LOW, uint8_t(DEBOUNCE_INPUT_DEFAUT));
 
         EEPROM.write(EEPROM_ADD_IS_SETUP_COUNTER_DEBOUNCE, IS_INSTALLED);
+        OEEVars.ui16CounterDebounce = DEBOUNCE_COUNTER_DEFAUT;
+        modBus.Hreg(REG_SET_COUNTER_DEBOUNCE, OEEVars.ui16CounterDebounce);
         EEPROM.write(EEPROM_ADD_COUNTER_DEBOUNCE_HIGH, uint8_t(DEBOUNCE_COUNTER_DEFAUT >> 8));
         EEPROM.write(EEPROM_ADD_COUNTER_DEBOUNCE_LOW, uint8_t(DEBOUNCE_COUNTER_DEFAUT));
         EEPROM.commit();
     }
+
+    if(modBus.Hreg(REG_SYNC_DATA) == IS_INSTALLED){
+        modBus.Hreg(REG_SYNC_DATA, NOT_INSTALLED);
+        syncData.isSyncData = true;
+        OEEVars.ui16SyncProductCounter = modBus.Hreg(REG_SYNC_ACTUAL);
+        OEEVars.i32SyncRunningTimeCounter = (modBus.Hreg(REG_SYNC_RUNNING_TIME_HIGH) << 16) | modBus.Hreg(REG_SYNC_RUNNING_TIME_LOW);
+        OEEVars.i16SyncDoneChangeMold = modBus.Hreg(REG_SYNC_DONE_CHANGE_MOLD);
+        OEEVars.i32SyncUpTime = (modBus.Hreg(REG_SYNC_TOTAL_TIME_HIGH) << 16) | modBus.Hreg(REG_SYNC_TOTAL_TIME_LOW);
+    }
+
+}
+
+void resetOEE(){
+    setupSlave.slaveId = SLAVE_ID_DEFAUT;
+    modBus.slave(setupSlave.slaveId);
+    EEPROM.write(EEPROM_ADD_IS_SETUP_SLAVE_ID, NOT_INSTALLED);
+    EEPROM.write(EEPROM_ADD_SLAVE_ID, setupSlave.slaveId);
+    modBus.Hreg(REG_SET_SLAVE_ID, setupSlave.slaveId);
+
+    OEEVars.ui16buttonDebounce = DEBOUNCE_BUTTON_DEFAUT;
+    EEPROM.write(EEPROM_ADD_IS_SETUP_BUTTON_DEBOUNCE, NOT_INSTALLED);
+    EEPROM.write(EEPROM_ADD_BUTTON_DEBOUNCE_HIGH, uint8_t(OEEVars.ui16buttonDebounce >> 8));
+    EEPROM.write(EEPROM_ADD_BUTTON_DEBOUNCE_LOW, uint8_t(OEEVars.ui16buttonDebounce));
+    modBus.Hreg(REG_SET_BUTTON_DEBOUNCE, OEEVars.ui16buttonDebounce);
+
+    OEEVars.ui16inputDebounce = DEBOUNCE_INPUT_DEFAUT;
+    EEPROM.write(EEPROM_ADD_IS_SETUP_INPUT_DEBOUNCE, NOT_INSTALLED);
+    EEPROM.write(EEPROM_ADD_INPUT_DEBOUNCE_HIGH, uint8_t(OEEVars.ui16inputDebounce >> 8));
+    EEPROM.write(EEPROM_ADD_INPUT_DEBOUNCE_LOW, uint8_t(OEEVars.ui16inputDebounce));
+    modBus.Hreg(REG_SET_INPUT_DEBOUNCE, OEEVars.ui16inputDebounce);
+
+    OEEVars.ui16CounterDebounce = DEBOUNCE_COUNTER_DEFAUT;
+    EEPROM.write(EEPROM_ADD_IS_SETUP_COUNTER_DEBOUNCE, IS_INSTALLED);
+    EEPROM.write(EEPROM_ADD_COUNTER_DEBOUNCE_HIGH, uint8_t(OEEVars.ui16CounterDebounce >> 8));
+    EEPROM.write(EEPROM_ADD_COUNTER_DEBOUNCE_LOW, uint8_t(OEEVars.ui16CounterDebounce));
+    modBus.Hreg(REG_SET_COUNTER_DEBOUNCE, OEEVars.ui16CounterDebounce);
+
+
+    EEPROM.commit();
+}
+
+uint32_t getUpTime(){
+    return millis()/1000;
 }
 
 void TaskReadInput(void *pvParameters){
+    uint32_t time_reset_mc = 0;
     for(;;){
+        if(!digitalRead(PIN_INPUT_RUN_STATUS)){
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+            OEEVars.eCurrentMachineStatus = MACHINE_STATUS_EXECUTE;
+        }
+        else if(!digitalRead(PIN_INPUT_IDLE_STATUS)){
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+            OEEVars.eCurrentMachineStatus = MACHINE_STATUS_IDLE;
+        }
+        else if(!digitalRead(PIN_INPUT_ERROR_STATUS)){
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+            OEEVars.eCurrentMachineStatus = MACHINE_STATUS_ERROR;
+        }
+        else{
+            OEEVars.eCurrentMachineStatus = MACHINE_STATUS_NA;
+        }
+        modBus.Hreg(REG_MC_STATUS, OEEVars.eCurrentMachineStatus);
 
+        if(!digitalRead(PIN_INPUT_START_CHANGE_MOLD)){
+            digitalWrite(PIN_OUTPUT_CHANGEMOLD_STATUS, HIGH);
+            vTaskDelay(OEEVars.ui16inputDebounce / portTICK_PERIOD_MS);
+            
+        }
+        if(!digitalRead(PIN_INPUT_STOP_CHANGE_MOLD)){
+            digitalWrite(PIN_OUTPUT_CHANGEMOLD_STATUS, LOW);
+            vTaskDelay(OEEVars.ui16inputDebounce / portTICK_PERIOD_MS);
+            OEEVars.i16DoneChangeMold++;
+        }
+
+        if(!digitalRead(PIN_INPUT_RESET_MC)){
+            if(millis() - time_reset_mc >= 5000){
+                Serial.println("Reset MC!!!");
+                resetOEE();
+            }
+        }
+        else{
+            time_reset_mc = millis();
+        }
+
+        if(OEEVars.ePreviousMachineStatus != OEEVars.eCurrentMachineStatus){
+            OEEVars.ePreviousMachineStatus = OEEVars.eCurrentMachineStatus;
+            if(OEEVars.eCurrentMachineStatus == MACHINE_STATUS_EXECUTE){
+                OEEVars.ui32LastMachineExecuteStatusTime = getUpTime();
+            }else{
+                OEEVars.i32RunningTimePrevious = OEEVars.i32RunningTimeCounter;
+            }
+        }
+        if(OEEVars.eCurrentMachineStatus == MACHINE_STATUS_EXECUTE){
+            OEEVars.i32PartialRunningTimeCounter = getUpTime() - OEEVars.ui32LastMachineExecuteStatusTime;
+            OEEVars.i32RunningTimeCounter = OEEVars.i32RunningTimePrevious + OEEVars.i32PartialRunningTimeCounter;
+        }
+
+        if(syncData.isSyncData){
+            modBus.Hreg(REG_ACTUAL, OEEVars.ui16SyncProductCounter + OEEVars.ui16ProductCounter);
+            modBus.Hreg(REG_ACTUAL, OEEVars.i32SyncRunningTimeCounter + OEEVars.i32RunningTimeCounter);
+            modBus.Hreg(REG_ACTUAL, OEEVars.i32SyncUpTime + getUpTime());
+            modBus.Hreg(REG_ACTUAL, OEEVars.i16SyncDoneChangeMold + OEEVars.i16DoneChangeMold);
+        }
+
+        vTaskDelay(100/ portTICK_PERIOD_MS); 
     }
 }
 
 void TaskReadCounter(void *pvParameters){
     for(;;){
-
+        if(!digitalRead(PIN_INPUT_COUNTER)){
+            vTaskDelay(OEEVars.ui16CounterDebounce / portTICK_PERIOD_MS);
+            OEEVars.ui16ProductCounter ++;
+            modBus.Hreg(REG_ACTUAL, OEEVars.ui16ProductCounter);
+        }
+        vTaskDelay(10/ portTICK_PERIOD_MS); 
     }
 }
 
