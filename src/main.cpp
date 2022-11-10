@@ -19,8 +19,8 @@
 #define MODBUS_DATA_BUFF_SIZE               250
 #define TIME_COUNTER_MINIMUM                0
 #define SLAVE_ID_DEFAUT                     200
-#define DEBOUNCE_BUTTON_DEFAUT              500
-#define DEBOUNCE_INPUT_DEFAUT               500
+#define DEBOUNCE_BUTTON_DEFAUT              50
+#define DEBOUNCE_INPUT_DEFAUT               50
 #define DEBOUNCE_COUNTER_DEFAUT             500
 #define IS_INSTALLED                        1
 #define NOT_INSTALLED                       0
@@ -56,7 +56,7 @@ enum{
 	REG_GET_COUNTER_DEBOUNCE_LOW,
 	REG_GET_COUNTER_DEBOUNCE_HIGH,
 
-	REG_SET_SLAVE_ID                        =100,    					
+	REG_SET_SLAVE_ID                        =50,    					
 	REG_SET_TIME,    										//0-none, 1 - time Epoch Unix, - 2 time year,hour
 	REG_SET_CURRENT_TIME_EPOCH,       			
 	REG_SET_CURRENT_YEAR,       					
@@ -90,9 +90,12 @@ enum{
 	REG_SET_COUNTER_DEBOUNCE,
     REG_RESET_ALL,
     REG_ACTUAL,
-    REG_RUNNING_TIME,
+    REG_RUNNING_TIME_HIGH,
+    REG_RUNNING_TIME_LOW,
+    REG_DONE_CHANGE_MOLD,
     REG_MC_STATUS,
-    REG_TOTAL_TIME
+    REG_TOTAL_TIME_HIGH,
+    REG_TOTAL_TIME_LOW
 } ;
 
 ModbusRTU modBus;
@@ -213,27 +216,33 @@ void resetOEE();
 uint32_t getUpTime();
 void TaskReadInput(void *pvParameters);
 void TaskReadCounter(void *pvParameters);
+void printData();
 
 void loadDataBegin(){
     if(EEPROM.read(EEPROM_ADD_IS_SETUP_SLAVE_ID) == IS_INSTALLED){
         setupSlave.isSetupSlaveId = true;
         setupSlave.slaveId = EEPROM.read(EEPROM_ADD_SLAVE_ID);
     }
-    else{
-        setupSlave.slaveId = SLAVE_ID_DEFAUT;
-    }
+    Serial.print("SlaveId: ");
+    Serial.println(setupSlave.slaveId);
     if(EEPROM.read(EEPROM_ADD_IS_SETUP_BUTTON_DEBOUNCE) == IS_INSTALLED){
         OEEVars.ui16buttonDebounce = EEPROM.read(EEPROM_ADD_BUTTON_DEBOUNCE_HIGH);
         OEEVars.ui16buttonDebounce = (OEEVars.ui16buttonDebounce << 8) | EEPROM.read(EEPROM_ADD_BUTTON_DEBOUNCE_LOW);
     }
+    Serial.print("buttonDebounce: ");
+    Serial.println(OEEVars.ui16buttonDebounce);
     if(EEPROM.read(EEPROM_ADD_IS_SETUP_INPUT_DEBOUNCE) == IS_INSTALLED){
         OEEVars.ui16inputDebounce = EEPROM.read(EEPROM_ADD_INPUT_DEBOUNCE_HIGH);
         OEEVars.ui16inputDebounce = (OEEVars.ui16inputDebounce << 8) | EEPROM.read(EEPROM_ADD_INPUT_DEBOUNCE_LOW);
     }
+    Serial.print("inputDebounce: ");
+    Serial.println(OEEVars.ui16inputDebounce);
     if(EEPROM.read(EEPROM_ADD_IS_SETUP_COUNTER_DEBOUNCE) == IS_INSTALLED){
-        OEEVars.ui16CounterDebounce = EEPROM.read(EEPROM_ADD_IS_SETUP_COUNTER_DEBOUNCE);
-        OEEVars.ui16CounterDebounce = (OEEVars.ui16CounterDebounce << 8) | EEPROM.read(EEPROM_ADD_IS_SETUP_COUNTER_DEBOUNCE);
+        OEEVars.ui16CounterDebounce = EEPROM.read(EEPROM_ADD_COUNTER_DEBOUNCE_HIGH);
+        OEEVars.ui16CounterDebounce = (OEEVars.ui16CounterDebounce << 8) | EEPROM.read(EEPROM_ADD_COUNTER_DEBOUNCE_LOW);
     }
+    Serial.print("CounterDebounce: ");
+    Serial.println(OEEVars.ui16CounterDebounce);
 }
 void initModbus(){
 	modBus.slave(setupSlave.slaveId);
@@ -254,6 +263,8 @@ void checkCommandModbus(){
         EEPROM.write(EEPROM_ADD_IS_SETUP_SLAVE_ID, IS_INSTALLED);
         EEPROM.write(EEPROM_ADD_SLAVE_ID, setupSlave.slaveId);
         EEPROM.commit();
+        Serial.print("Set Slave ID: ");
+        Serial.println(setupSlave.slaveId);
     }
     if(OEEVars.ui16buttonDebounce != modBus.Hreg(REG_SET_BUTTON_DEBOUNCE)){
         OEEVars.ui16buttonDebounce = modBus.Hreg(REG_SET_BUTTON_DEBOUNCE);
@@ -261,6 +272,8 @@ void checkCommandModbus(){
         EEPROM.write(EEPROM_ADD_BUTTON_DEBOUNCE_HIGH, uint8_t(OEEVars.ui16buttonDebounce >> 8));
         EEPROM.write(EEPROM_ADD_BUTTON_DEBOUNCE_LOW, uint8_t(OEEVars.ui16buttonDebounce));
         EEPROM.commit();
+        Serial.print("Set buttonDebounce: ");
+        Serial.println(OEEVars.ui16buttonDebounce);
     }
     if(OEEVars.ui16inputDebounce != modBus.Hreg(REG_SET_INPUT_DEBOUNCE)){
         OEEVars.ui16inputDebounce = modBus.Hreg(REG_SET_INPUT_DEBOUNCE);
@@ -268,6 +281,8 @@ void checkCommandModbus(){
         EEPROM.write(EEPROM_ADD_INPUT_DEBOUNCE_HIGH, uint8_t(OEEVars.ui16inputDebounce >> 8));
         EEPROM.write(EEPROM_ADD_INPUT_DEBOUNCE_LOW, uint8_t(OEEVars.ui16inputDebounce));
         EEPROM.commit();
+        Serial.print("Set inputDebounce: ");
+        Serial.println(OEEVars.ui16inputDebounce);
     }
     if(OEEVars.ui16CounterDebounce != modBus.Hreg(REG_SET_COUNTER_DEBOUNCE)){
         OEEVars.ui16CounterDebounce = modBus.Hreg(REG_SET_COUNTER_DEBOUNCE);
@@ -275,8 +290,11 @@ void checkCommandModbus(){
         EEPROM.write(EEPROM_ADD_COUNTER_DEBOUNCE_HIGH, uint8_t(OEEVars.ui16CounterDebounce >> 8));
         EEPROM.write(EEPROM_ADD_COUNTER_DEBOUNCE_LOW, uint8_t(OEEVars.ui16CounterDebounce));
         EEPROM.commit();
+        Serial.print("Set CounterDebounce: ");
+        Serial.println(OEEVars.ui16CounterDebounce);
     }
     if(modBus.Hreg(REG_RESET_ALL) == IS_INSTALLED){
+        Serial.print("Reset All");
         modBus.Hreg(REG_RESET_ALL, NOT_INSTALLED);
         // EEPROM.write(EEPROM_ADD_IS_SETUP_SLAVE_ID, NOT_INSTALLED);
         // EEPROM.write(EEPROM_ADD_SLAVE_ID, SLAVE_ID_DEFAUT);
@@ -308,11 +326,21 @@ void checkCommandModbus(){
         OEEVars.i32SyncRunningTimeCounter = (modBus.Hreg(REG_SYNC_RUNNING_TIME_HIGH) << 16) | modBus.Hreg(REG_SYNC_RUNNING_TIME_LOW);
         OEEVars.i16SyncDoneChangeMold = modBus.Hreg(REG_SYNC_DONE_CHANGE_MOLD);
         OEEVars.i32SyncUpTime = (modBus.Hreg(REG_SYNC_TOTAL_TIME_HIGH) << 16) | modBus.Hreg(REG_SYNC_TOTAL_TIME_LOW);
+        Serial.println("Sync Data");
+        Serial.print("SyncProductCounter: ");
+        Serial.println(OEEVars.ui16SyncProductCounter);
+        Serial.print("SyncRunningTimeCounter: ");
+        Serial.println(OEEVars.i32SyncRunningTimeCounter);
+        Serial.print("SyncDoneChangeMold: ");
+        Serial.println(OEEVars.i16SyncDoneChangeMold);
+        Serial.print("SyncUpTime: ");
+        Serial.println(OEEVars.i32SyncUpTime);
     }
 
 }
 
 void resetOEE(){
+    Serial.println("Reset OEE");
     setupSlave.slaveId = SLAVE_ID_DEFAUT;
     modBus.slave(setupSlave.slaveId);
     EEPROM.write(EEPROM_ADD_IS_SETUP_SLAVE_ID, NOT_INSTALLED);
@@ -378,7 +406,7 @@ void TaskReadInput(void *pvParameters){
 
         if(!digitalRead(PIN_INPUT_RESET_MC)){
             if(millis() - time_reset_mc >= 5000){
-                Serial.println("Reset MC!!!");
+                time_reset_mc = millis();
                 resetOEE();
             }
         }
@@ -401,12 +429,15 @@ void TaskReadInput(void *pvParameters){
 
         if(syncData.isSyncData){
             modBus.Hreg(REG_ACTUAL, OEEVars.ui16SyncProductCounter + OEEVars.ui16ProductCounter);
-            modBus.Hreg(REG_ACTUAL, OEEVars.i32SyncRunningTimeCounter + OEEVars.i32RunningTimeCounter);
-            modBus.Hreg(REG_ACTUAL, OEEVars.i32SyncUpTime + getUpTime());
-            modBus.Hreg(REG_ACTUAL, OEEVars.i16SyncDoneChangeMold + OEEVars.i16DoneChangeMold);
+            modBus.Hreg(REG_RUNNING_TIME_HIGH, (OEEVars.i32SyncRunningTimeCounter + OEEVars.i32RunningTimeCounter)>>16);
+            modBus.Hreg(REG_RUNNING_TIME_HIGH, OEEVars.i32SyncRunningTimeCounter + OEEVars.i32RunningTimeCounter);
+            modBus.Hreg(REG_TOTAL_TIME_HIGH, (OEEVars.i32SyncUpTime + getUpTime())>>16);
+            modBus.Hreg(REG_TOTAL_TIME_LOW, OEEVars.i32SyncUpTime + getUpTime());
+            modBus.Hreg(REG_DONE_CHANGE_MOLD, OEEVars.i16SyncDoneChangeMold + OEEVars.i16DoneChangeMold);
+            modBus.Hreg(REG_MC_STATUS, OEEVars.eCurrentMachineStatus);
         }
 
-        vTaskDelay(100/ portTICK_PERIOD_MS); 
+        vTaskDelay(10/portTICK_PERIOD_MS); 
     }
 }
 
@@ -419,6 +450,21 @@ void TaskReadCounter(void *pvParameters){
         }
         vTaskDelay(10/ portTICK_PERIOD_MS); 
     }
+}
+
+void printData(){
+    Serial.print("SlaveID: ");
+    Serial.print(setupSlave.slaveId);
+    Serial.print(", Actual: ");
+    Serial.print(OEEVars.ui16SyncProductCounter + OEEVars.ui16ProductCounter);
+    Serial.print(", RunTime: ");
+    Serial.print(OEEVars.i32SyncRunningTimeCounter + OEEVars.i32RunningTimeCounter);
+    Serial.print(", MCStatus: ");
+    Serial.print(OEEVars.eCurrentMachineStatus);
+    Serial.print(", RunningNumber: ");
+    Serial.print(OEEVars.i16SyncDoneChangeMold + OEEVars.i16DoneChangeMold);
+    Serial.print(", UpTime: ");
+    Serial.println(OEEVars.i32SyncUpTime + getUpTime());
 }
 
 
@@ -443,8 +489,8 @@ void setup() {
 	modBus.setBaudrate(9600);
 #endif
 
-	initModbus();
 	loadDataBegin();
+    initModbus();
 	// ds3231_clock.begin();
 
     xTaskCreatePinnedToCore(
@@ -467,9 +513,16 @@ void setup() {
   
 }
 
+uint32_t timePrint = 0;
 void loop() {
     checkCommandModbus();
 	modBus.task();
-    vTaskDelay(100/ portTICK_PERIOD_MS);
+    vTaskDelay(10/ portTICK_PERIOD_MS);
+    if(millis() - timePrint > 5000){
+        timePrint = millis();
+        if(syncData.isSyncData){
+            printData();
+        }
+    }
 	yield();
 }
