@@ -401,6 +401,8 @@ void TaskReadInput(void *pvParameters){
         if(!digitalRead(PIN_INPUT_STOP_CHANGE_MOLD)){
             digitalWrite(PIN_OUTPUT_CHANGEMOLD_STATUS, LOW);
             vTaskDelay(OEEVars.ui16inputDebounce / portTICK_PERIOD_MS);
+            while(!digitalRead(PIN_INPUT_STOP_CHANGE_MOLD)){
+            }
             OEEVars.i16DoneChangeMold++;
         }
 
@@ -436,7 +438,6 @@ void TaskReadInput(void *pvParameters){
             modBus.Hreg(REG_DONE_CHANGE_MOLD, OEEVars.i16SyncDoneChangeMold + OEEVars.i16DoneChangeMold);
             modBus.Hreg(REG_MC_STATUS, OEEVars.eCurrentMachineStatus);
         }
-
         vTaskDelay(10/portTICK_PERIOD_MS); 
     }
 }
@@ -446,7 +447,7 @@ void TaskReadCounter(void *pvParameters){
         if(!digitalRead(PIN_INPUT_COUNTER)){
             vTaskDelay(OEEVars.ui16CounterDebounce / portTICK_PERIOD_MS);
             OEEVars.ui16ProductCounter ++;
-            modBus.Hreg(REG_ACTUAL, OEEVars.ui16ProductCounter);
+            // modBus.Hreg(REG_ACTUAL, OEEVars.ui16ProductCounter);
         }
         vTaskDelay(10/ portTICK_PERIOD_MS); 
     }
