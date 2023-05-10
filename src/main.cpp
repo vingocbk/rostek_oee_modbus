@@ -57,13 +57,20 @@ enum{
 	REG_CANCEL,
 	REG_DONE,
 
-	REG_MODBUS_COUNT_H 			= 4496,
-	REG_MODBUS_COUNT_L 			= 4497,
-	REG_MODBUS_STATUS 			= 5000,
-	REG_MODBUS_NG_H 			= 4498,
-	REG_MODBUS_NG_L 			= 4499,
-	REG_MODBUS_RUNNING_NUMBER_H = 4501,
-	REG_MODBUS_RUNNING_NUMBER_L = 4502
+	// REG_MODBUS_COUNT_H 			= 4496,
+	// REG_MODBUS_COUNT_L 			= 4497,
+	// REG_MODBUS_STATUS 			= 4500,
+	// REG_MODBUS_NG_H 			= 4498,
+	// REG_MODBUS_NG_L 			= 4499,
+	// REG_MODBUS_RUNNING_NUMBER_H = 4501,
+	// REG_MODBUS_RUNNING_NUMBER_L = 4502
+	REG_MODBUS_COUNT_H 			= 2496,
+	REG_MODBUS_COUNT_L 			= 2497,
+	REG_MODBUS_STATUS 			= 2500,
+	REG_MODBUS_NG_H 			= 2498,
+	REG_MODBUS_NG_L 			= 2499,
+	REG_MODBUS_RUNNING_NUMBER_H = 2501,
+	REG_MODBUS_RUNNING_NUMBER_L = 2502
 };
 
 typedef enum{
@@ -276,12 +283,28 @@ void initModbus(){
 	modbus1.setBaudrate(setupConfig.modbusBaudrate);
 	// modbus2.slave(setupConfig.slaveId);
 	// modbus2.setBaudrate(setupConfig.modbusBaudrate);
-	for(int i = REG_MODBUS_COUNT_H; i < REG_MODBUS_COUNT_H+50; i++){
+
+	for(int i = 0; i <= REG_MODBUS_RUNNING_NUMBER_L; i++){
 		modbus1.addHreg(i);
-		modbus1.Hreg(i, 0);
-		// modbus2.addHreg(i);
-		// modbus2.Hreg(i, 0);
 	}
+
+	modbus1.Hreg(REG_MODBUS_STATUS, dataRegister.eCurrentMachineStatus);
+	// modbus2.Hreg(REG_MODBUS_STATUS, dataRegister.eCurrentMachineStatus);
+
+	modbus1.Hreg(REG_MODBUS_COUNT_H, dataRegister.count >> 16);
+	modbus1.Hreg(REG_MODBUS_COUNT_L, dataRegister.count);
+	// modbus2.Hreg(REG_MODBUS_COUNT_H, dataRegister.count >> 16);
+	// modbus2.Hreg(REG_MODBUS_COUNT_L, dataRegister.count);
+
+	modbus1.Hreg(REG_MODBUS_NG_H, dataRegister.ng >> 16);
+	modbus1.Hreg(REG_MODBUS_NG_L, dataRegister.ng);
+	// modbus2.Hreg(REG_MODBUS_NG_H, dataRegister.ng >> 16);
+	// modbus2.Hreg(REG_MODBUS_NG_L, dataRegister.ng);
+
+	modbus1.Hreg(REG_MODBUS_RUNNING_NUMBER_H, dataRegister.runningNumber >> 16);
+	modbus1.Hreg(REG_MODBUS_RUNNING_NUMBER_L, dataRegister.runningNumber);
+	// modbus2.Hreg(REG_MODBUS_RUNNING_NUMBER_H, dataRegister.runningNumber >> 16);
+	// modbus2.Hreg(REG_MODBUS_RUNNING_NUMBER_L, dataRegister.runningNumber);
 }
 
 String macID(){
