@@ -1,529 +1,533 @@
+
+/*
+  ModbusRTU ESP8266/ESP32
+  Simple slave example
+
+  (c)2019 Alexander Emelianov (a.m.emelianov@gmail.com)
+  https://github.com/emelianov/modbus-esp8266
+
+  modified 13 May 2020
+  by brainelectronics
+
+  This code is licensed under the BSD New License. See LICENSE.txt for more info.
+*/
 #include <Arduino.h>
 #include <ModbusRTU.h>
 #include <EEPROM.h>
 #include <Wire.h>
-#include "DS3231.h"
+#include "html.h"
+#include <WiFi.h>
+#include <WebServer.h>
+#include "config.h"
+#include "soc/soc.h"  //Brownout detector was triggered
+#include "soc/rtc_cntl_reg.h"
 
-#define PIN_RX_MODBUS                     	16
-#define PIN_TX_MODBUS                     	17
-#define PIN_INPUT_COUNTER                 	26    	//INPUT 8
-#define PIN_INPUT_RUN_STATUS              	25   	//INPUT 7
-#define PIN_INPUT_IDLE_STATUS             	33    	//INPUT 6
-#define PIN_INPUT_ERROR_STATUS            	32    	//INPUT 5
-#define PIN_INPUT_RESET_MC                	35    	//INPUT 4
-#define PIN_INPUT_START_CHANGE_MOLD       	34    	//INPUT 3
-#define PIN_INPUT_STOP_CHANGE_MOLD        	39    	//INPUT 2
-#define PIN_INPUT_RESET_SLAVE_ID          	36    	//INPUT 1
-#define PIN_OUTPUT_CHANGEMOLD_STATUS      	5    	//OUTPUT 1
+#define PIN_OUTPUT_RED        		18      //OUTPUT 2    //IDLE
+#define PIN_OUTPUT_YELLOW     		19      //OUTPUT 3    //WAITING
+#define PIN_OUTPUT_GREEN      		23      //OUTPUT 4    //EXECUTE
+#define PIN_OUTPUT_4          		5       //OUTPUT 1
 
-#define MODBUS_DATA_BUFF_SIZE               250
-#define TIME_COUNTER_MINIMUM                0
-#define SLAVE_ID_DEFAUT                     200
-#define DEBOUNCE_BUTTON_DEFAUT              50
-#define DEBOUNCE_INPUT_DEFAUT               50
-#define DEBOUNCE_COUNTER_DEFAUT             500
-#define IS_INSTALLED                        1
-#define NOT_INSTALLED                       0
+#define PIN_INPUT_COUNT      		36      //INPUT 1 - SENSOR_VP
+#define PIN_INPUT_RUN       		39      //INPUT 2 - SENSOR_VN
+#define PIN_INPUT_IDLE       		34      //INPUT 3
+#define PIN_INPUT_ERROR       		35      //INPUT 4
+#define PIN_INPUT_NG       			32      //INPUT 5
+#define PIN_INPUT_RUNNING_NUMBER    33      //INPUT 6
+#define PIN_INPUT_CONFIG      		25      //INPUT 7
+// #define PIN_INPUT_START       		26      //INPUT 8
+
+#define PIN_MODBUS_RX         		16
+#define PIN_MODBUS_TX         		17
+
+#define PIN_MODBUS_RX_2        		16
+#define PIN_MODBUS_TX_2        		17
+
+#define ON_FET      HIGH
+#define OFF_FET     LOW
+
+#define EEPROM_COUNT				0
+#define EEPROM_NG					10
+#define EEPROM_RUNNING_NUMBER		20
+#define EEPROM_SLAVE_ID				30
+#define EEPROM_MODBUS_BAUDRATE		40
 
 enum{
-    EEPROM_ADD_IS_SETUP_SLAVE_ID = 1,
-	EEPROM_ADD_SLAVE_ID,
-    EEPROM_ADD_IS_SETUP_BUTTON_DEBOUNCE,
-	EEPROM_ADD_BUTTON_DEBOUNCE_HIGH,
-    EEPROM_ADD_BUTTON_DEBOUNCE_LOW,
-    EEPROM_ADD_IS_SETUP_INPUT_DEBOUNCE,
-	EEPROM_ADD_INPUT_DEBOUNCE_HIGH,
-    EEPROM_ADD_INPUT_DEBOUNCE_LOW,
-    EEPROM_ADD_IS_SETUP_COUNTER_DEBOUNCE,
-	EEPROM_ADD_COUNTER_DEBOUNCE_HIGH,
-    EEPROM_ADD_COUNTER_DEBOUNCE_LOW,
-	// EEPROM_ADD_COUNTER_DEBOUNCE_LOW,
-	// EEPROM_ADD_COUNTER_DEBOUNCE_HIGH
+	REG_CALL_ORDER = 1,
+	REG_START,
+	REG_CANCEL,
+	REG_DONE,
+
+	REG_MODBUS_COUNT_H 			= 4496,
+	REG_MODBUS_COUNT_L 			= 4497,
+	REG_MODBUS_STATUS 			= 5000,
+	REG_MODBUS_NG_H 			= 4498,
+	REG_MODBUS_NG_L 			= 4499,
+	REG_MODBUS_RUNNING_NUMBER_H = 4501,
+	REG_MODBUS_RUNNING_NUMBER_L = 4502
 };
 
-enum{
-	REG_U16_OEE_ACTUAL                  	= 1,
-	REG_U32_OEE_RUN_TIME_HIGH,           
-	REG_U32_OEE_RUN_TIME_LOW,            
-	REG_U16_OEE_MC_STATUS,               
-	REG_U32_OEE_TOTAL_TIME_HIGH,         
-	REG_U32_OEE_TOTAL_TIME_LOW,          
-	REG_U16_OEE_DONE_CHANGE_MOLD,      
-	REG_GET_SLAVE_ID,   
-	REG_GET_BUTTON_DEBOUNCE, 
-	REG_GET_INPUT_DEBOUNCE, 
-	REG_GET_COUNTER_DEBOUNCE,
-	REG_GET_COUNTER_DEBOUNCE_LOW,
-	REG_GET_COUNTER_DEBOUNCE_HIGH,
-
-	REG_SET_SLAVE_ID                        =50,    					
-	REG_SET_TIME,    										//0-none, 1 - time Epoch Unix, - 2 time year,hour
-	REG_SET_CURRENT_TIME_EPOCH,       			
-	REG_SET_CURRENT_YEAR,       					
-	REG_SET_CURRENT_MONTH,        				
-	REG_SET_CURRENT_DATE,        				
-	REG_SET_CURRENT_HOUR,        				
-	REG_SET_CURRENT_MINUTE,        				
-	REG_SET_CURRENT_SECOND,
-	REG_SET_WORKING_SHIFT,        				
-	REG_SET_WORKING_SHIFT_1_START_HOUR,
-	REG_SET_WORKING_SHIFT_1_START_MINUTE,
-	REG_SET_WORKING_SHIFT_1_START_SECOND,
-	REG_SET_WORKING_SHIFT_1_END_HOUR,
-	REG_SET_WORKING_SHIFT_1_END_MINUTE,
-	REG_SET_WORKING_SHIFT_1_END_SECOND,
-	REG_SET_WORKING_SHIFT_2_START_HOUR,
-	REG_SET_WORKING_SHIFT_2_START_MINUTE,
-	REG_SET_WORKING_SHIFT_2_START_SECOND,
-	REG_SET_WORKING_SHIFT_2_END_HOUR,
-	REG_SET_WORKING_SHIFT_2_END_MINUTE,
-	REG_SET_WORKING_SHIFT_2_END_SECOND,
-    REG_SYNC_DATA,
-	REG_SYNC_ACTUAL,
-	REG_SYNC_RUNNING_TIME_HIGH,
-    REG_SYNC_RUNNING_TIME_LOW,
-	REG_SYNC_DONE_CHANGE_MOLD,
-	REG_SYNC_TOTAL_TIME_HIGH,
-    REG_SYNC_TOTAL_TIME_LOW,
-	REG_SET_BUTTON_DEBOUNCE,
-	REG_SET_INPUT_DEBOUNCE,        		
-	REG_SET_COUNTER_DEBOUNCE,
-    REG_RESET_ALL,
-    REG_ACTUAL,
-    REG_RUNNING_TIME_HIGH,
-    REG_RUNNING_TIME_LOW,
-    REG_DONE_CHANGE_MOLD,
-    REG_MC_STATUS,
-    REG_TOTAL_TIME_HIGH,
-    REG_TOTAL_TIME_LOW
-} ;
-
-ModbusRTU modBus;
-struct SetupSlave
-{
-    bool isSetupSlaveId = false;
-    uint8_t slaveId = SLAVE_ID_DEFAUT;
-} setupSlave;
-
-// DS3231 ds3231_clock;
-// RTCDateTime dt;
-
 typedef enum{
-    MACHINE_STATUS_NA = 0,
-    MACHINE_STATUS_EXECUTE = 1,
-    MACHINE_STATUS_IDLE = 2,
-    MACHINE_STATUS_ERROR = 3
+	MACHINE_STATUS_RUN = 0,
+    MACHINE_STATUS_IDLE,
+    // MACHINE_STATUS_WAITING,
+    // MACHINE_STATUS_EXECUTE,
+	MACHINE_STATUS_ERROR,
+	MACHINE_STATUS_UNKNOW
 } MACHINE_STATUS;
 
-struct SyncData
+struct SetupConfig
 {
-    bool isSyncDateTime = false;
-    bool isSyncWorkingShift = false;
-    bool isSyncData = false;
-} syncData;
+    /* data */
+	uint8_t slaveId;
+	uint32_t modbusBaudrate;
+	bool turnOnApMode = false;
+    // uint32_t timeRelay1;
+    // uint16_t timeRelay2;
+    // uint16_t timeRelay3;
+    // uint16_t timeRelay4;
+    // MachineStatus machineStatus = IDLE;
+    // MachineStatus relay1Status = IDLE;
+    // MachineStatus relay2Status = IDLE;
+    // MachineStatus relay3Status = IDLE;
+    // MachineStatus relay4Status = IDLE;
+    uint32_t timeCheckTurnOnConfig = 0;
+    uint32_t timeCheckTurnOffConfig = 0;
+	uint32_t timePrintData = 0;
+}setupConfig;
 
-struct OEEVariables {
-    //save data
-    int32_t i32RunningTimeCounter = TIME_COUNTER_MINIMUM;             /*!< Total Runningtime second counter */
-    int32_t i32SyncRunningTimeCounter = TIME_COUNTER_MINIMUM;             /*!< Total Offset Runningtime second counter */
-    int32_t i32RunningTimePrevious = TIME_COUNTER_MINIMUM;             /*!< Total Runningtime second counter */
-    int32_t i32PartialRunningTimeCounter = TIME_COUNTER_MINIMUM;             /*!< Total Runningtime second counter */
-    //save data
-    int32_t i32DownTimeCounter = TIME_COUNTER_MINIMUM;                /*!< Total Downtime second counter  */
-    int32_t i32DownTimePrevious = TIME_COUNTER_MINIMUM;  
-    int32_t i32PartialDownTimeCounter = TIME_COUNTER_MINIMUM;          /*!< Downtime second counter  */
-    int32_t i32ChangMoldDownTimeCounter = TIME_COUNTER_MINIMUM;        /*!< Change Mold Downtime second counter  */
-    int32_t i32QualityDownTimeCounter = TIME_COUNTER_MINIMUM;          /*!< Quality Downtime second counter  */
-    int32_t i32MachineErrorDownTimeCounter = TIME_COUNTER_MINIMUM;     /*!< Machine Error Downtime second counter  */
-    int32_t i32OthersDownTimeCounter = TIME_COUNTER_MINIMUM;           /*!< Other Reason Downtime second counter  */
-    int32_t i32NewDownTimeCounter  = TIME_COUNTER_MINIMUM;             /*!< New Update, get data onserver before calculate  */
-    int32_t i32NewDownTimeCounterPrevious  = TIME_COUNTER_MINIMUM;
-
-    int32_t i32ChangMoldDownTimePrevious = TIME_COUNTER_MINIMUM;        /*!< Change Mold Downtime second previous  */
-    int32_t i32QualityDownTimePrevious = TIME_COUNTER_MINIMUM;          /*!< Quality Downtime second previous  */
-    int32_t i32MachineErrorDownTimePrevious = TIME_COUNTER_MINIMUM;     /*!< Machine Error Downtime second previous  */
-    int32_t i32OthersDownTimePrevious = TIME_COUNTER_MINIMUM;           /*!< Other Reason Downtime second previous  */
-
-    int32_t i32SyncUpTime = TIME_COUNTER_MINIMUM;
-
-    uint16_t ui16ProductCounter = 0;
-    uint16_t ui16SyncProductCounter = 0;
-    uint16_t ui16ProductCounterDaily = 0;
-    int32_t i32ActualProduct = 0;   //save data
-    int32_t i32TargetProduct = 0;   //save data
-    int16_t i16DoneChangeMold = 0;   //number of done change mold
-    int16_t i16SyncDoneChangeMold = 0;   //sync number of done change mold
-
-    int32_t i32MPTProductInput = 0;
-    int32_t i32NGProductInput = 0;
-
-    float     fAvailability = 0.0;
-    float     fProductivity = 0.0;
-    float     fQuality = 0.0;
-    float     fOEEOverall = 0.0;
-
-    uint32_t ui32LastMachineExecuteStatusTime     = 0;
-    uint32_t ui32LastMachineDowntimeStatusTime     = 0;
-    uint32_t ui32OrderExecuteStartTime             = 0;
-    uint32_t ui32OEEDataPublishTime             = 0;
-
-    uint8_t ui8WorkingShiftStartHour1 = 0;
-    uint8_t ui8WorkingShiftStartMinute1 = 0;
-    uint8_t ui8WorkingShiftEndHour1 = 0;
-    uint8_t ui8WorkingShiftEndMinute1 = 0;
-    uint8_t ui8WorkingShiftStartHour2 = 0;
-    uint8_t ui8WorkingShiftStartMinute2 = 0;
-    uint8_t ui8WorkingShiftEndHour2 = 0;
-    uint8_t ui8WorkingShiftEndMinute2 = 0;
-    uint8_t ui8CountCurrentWorking = 0;
-    uint8_t ui8CountCurrentChangeMold1 = 0;
-    uint8_t ui8CountCurrentChangeMold2 = 0;
-    uint8_t ui8CountCurrentChangeMold3 = 0;
-
-    int32_t i32PartialDownTimeTimeStamp = 0;                           /*!< Downtime time stamp  */
-    int32_t i32OrderExecutedTimeCounter = TIME_COUNTER_MINIMUM;        /*!< Order execute second counter from order state change to ready  */
-
-    bool bIsDownTimeHappenned = false;                  /*!< Downtime status  */
-    bool bIsChangeMold = false;                    /*!< Change mold status */
-    bool bIsChangeMoldFinished = false;            /*!< Change mold finished status */
-
-    MACHINE_STATUS  eCurrentMachineStatus = MACHINE_STATUS_NA;
-    MACHINE_STATUS  ePreviousMachineStatus = MACHINE_STATUS_NA;
+struct DataRegister
+{
+    /* data */
+    uint32_t count;
+	uint32_t ng;
+	uint32_t runningNumber;
+	MACHINE_STATUS  eCurrentMachineStatus;
+}dataRegister;
 
 
-    bool bIsRunSwitchGPIOStatus = false;
-    bool bIsIdleSwitchGPIOStatus = false;
-    bool bIsErrorSwitchGPIOStatus = false;
-    bool bIsCounterGPIOStatus = false;
-    bool bIsBuzzerGPIOStatus = false;
-    // bool bIsSyncDataWorkingShift = false;
-    bool bIsSyncActualWhenOffline = false;
-    bool bIsSyncWorkingShiftTime = false;
-    bool bIsSyncDataDisconnect = false;
-    // bool bIsSyncDataActual = false;
+ModbusRTU modbus1, modbus2;
+WebServer server(HTTP_PORT);
 
-    uint16_t modbusData[MODBUS_DATA_BUFF_SIZE];
-    uint16_t ui16buttonDebounce  = DEBOUNCE_BUTTON_DEFAUT;
-    uint16_t ui16inputDebounce = DEBOUNCE_INPUT_DEFAUT;
-    uint16_t ui16CounterDebounce = DEBOUNCE_COUNTER_DEFAUT;
+void checkInputCount(void *pvParameters);
+void checkInputMCStatus(void *pvParameters);
+void checkInputNG(void *pvParameters);
+void checkInputRunningNumber(void *pvParameters);
 
-} OEEVars;
-
-void loadDataBegin();
-void initModbus();
-void checkCommandModbus();
-void resetOEE();
-uint32_t getUpTime();
-void TaskReadInput(void *pvParameters);
-void TaskReadCounter(void *pvParameters);
+void checkButtonConfigClick();
 void printData();
 
+void showLedStatus(MACHINE_STATUS status);
+void loadDataBegin();
+void initModbus();
+String macID();
+void setupConfigMode();
+void handleRoot();
+void configModbus();
+void resetData();
+void startWebServer();
+void resetDataOee();
+
+
+void checkInputCount(void *pvParameters){
+	for(;;){
+		if(digitalRead(PIN_INPUT_COUNT) == BTN_PRESSED){
+			vTaskDelay(100/portTICK_PERIOD_MS); 
+			while(digitalRead(PIN_INPUT_COUNT) == BTN_PRESSED){
+				vTaskDelay(100/portTICK_PERIOD_MS); 
+			}
+			dataRegister.count++;
+			modbus1.Hreg(REG_MODBUS_COUNT_H, dataRegister.count >> 16);
+			modbus1.Hreg(REG_MODBUS_COUNT_L, dataRegister.count);
+			// modbus2.Hreg(REG_MODBUS_COUNT_H, dataRegister.count >> 16);
+			// modbus2.Hreg(REG_MODBUS_COUNT_L, dataRegister.count);
+			EEPROM.write(EEPROM_COUNT, dataRegister.count >> 24);
+			EEPROM.write(EEPROM_COUNT+1, dataRegister.count >> 16);
+			EEPROM.write(EEPROM_COUNT+2, dataRegister.count >> 8);
+			EEPROM.write(EEPROM_COUNT+3, dataRegister.count);
+			EEPROM.commit();
+		}
+		vTaskDelay(100/portTICK_PERIOD_MS); 
+	}
+}
+
+void checkInputMCStatus(void *pvParameters){
+	for(;;){
+		if(digitalRead(PIN_INPUT_RUN) == BTN_PRESSED && dataRegister.eCurrentMachineStatus != MACHINE_STATUS_RUN){
+			dataRegister.eCurrentMachineStatus = MACHINE_STATUS_RUN;
+			modbus1.Hreg(REG_MODBUS_STATUS, dataRegister.eCurrentMachineStatus);
+			// modbus2.Hreg(REG_MODBUS_STATUS, dataRegister.eCurrentMachineStatus);
+			showLedStatus(dataRegister.eCurrentMachineStatus);
+		}
+		else if(digitalRead(PIN_INPUT_IDLE) == BTN_PRESSED && dataRegister.eCurrentMachineStatus != MACHINE_STATUS_IDLE){
+			dataRegister.eCurrentMachineStatus = MACHINE_STATUS_IDLE;
+			modbus1.Hreg(REG_MODBUS_STATUS, dataRegister.eCurrentMachineStatus);
+			// modbus2.Hreg(REG_MODBUS_STATUS, dataRegister.eCurrentMachineStatus);
+			showLedStatus(dataRegister.eCurrentMachineStatus);
+		}
+		else if(digitalRead(PIN_INPUT_ERROR) == BTN_PRESSED && dataRegister.eCurrentMachineStatus != MACHINE_STATUS_ERROR){
+			dataRegister.eCurrentMachineStatus = MACHINE_STATUS_ERROR;
+			modbus1.Hreg(REG_MODBUS_STATUS, dataRegister.eCurrentMachineStatus);
+			// modbus2.Hreg(REG_MODBUS_STATUS, dataRegister.eCurrentMachineStatus);
+			showLedStatus(dataRegister.eCurrentMachineStatus);
+		}
+		vTaskDelay(100/portTICK_PERIOD_MS); 
+	}
+}
+
+void checkInputNG(void *pvParameters){
+	for(;;){
+		if(digitalRead(PIN_INPUT_NG) == BTN_PRESSED){
+			vTaskDelay(100/portTICK_PERIOD_MS); 
+			while(digitalRead(PIN_INPUT_NG) == BTN_PRESSED){
+				vTaskDelay(100/portTICK_PERIOD_MS); 
+			}
+			dataRegister.ng++;
+			modbus1.Hreg(REG_MODBUS_NG_H, dataRegister.ng >> 16);
+			modbus1.Hreg(REG_MODBUS_NG_L, dataRegister.ng);
+			// modbus2.Hreg(REG_MODBUS_NG_H, dataRegister.ng >> 16);
+			// modbus2.Hreg(REG_MODBUS_NG_L, dataRegister.ng);
+			EEPROM.write(EEPROM_NG, dataRegister.ng >> 24);
+			EEPROM.write(EEPROM_NG+1, dataRegister.ng >> 16);
+			EEPROM.write(EEPROM_NG+2, dataRegister.ng >> 8);
+			EEPROM.write(EEPROM_NG+3, dataRegister.ng);
+			EEPROM.commit();
+		}
+		vTaskDelay(100/portTICK_PERIOD_MS); 
+	}
+}
+
+void checkInputRunningNumber(void *pvParameters){
+	for(;;){
+		if(digitalRead(PIN_INPUT_RUNNING_NUMBER) == BTN_PRESSED){
+			vTaskDelay(100/portTICK_PERIOD_MS); 
+			while(digitalRead(PIN_INPUT_RUNNING_NUMBER) == BTN_PRESSED){
+				vTaskDelay(100/portTICK_PERIOD_MS); 
+			}
+			dataRegister.runningNumber++;
+			modbus1.Hreg(REG_MODBUS_RUNNING_NUMBER_H, dataRegister.runningNumber >> 16);
+			modbus1.Hreg(REG_MODBUS_RUNNING_NUMBER_L, dataRegister.runningNumber);
+			// modbus2.Hreg(REG_MODBUS_RUNNING_NUMBER_H, dataRegister.runningNumber >> 16);
+			// modbus2.Hreg(REG_MODBUS_RUNNING_NUMBER_L, dataRegister.runningNumber);
+			EEPROM.write(EEPROM_RUNNING_NUMBER, dataRegister.runningNumber >> 24);
+			EEPROM.write(EEPROM_RUNNING_NUMBER+1, dataRegister.runningNumber >> 16);
+			EEPROM.write(EEPROM_RUNNING_NUMBER+2, dataRegister.runningNumber >> 8);
+			EEPROM.write(EEPROM_RUNNING_NUMBER+3, dataRegister.runningNumber);
+			EEPROM.commit();
+		}
+		vTaskDelay(100/portTICK_PERIOD_MS); 
+	}
+}
+
+void showLedStatus(MACHINE_STATUS status){
+	if(status == MACHINE_STATUS_IDLE){
+		digitalWrite(PIN_OUTPUT_RED, ON_FET);
+		digitalWrite(PIN_OUTPUT_YELLOW, OFF_FET);
+		digitalWrite(PIN_OUTPUT_GREEN, OFF_FET);
+	}
+	else if(status == MACHINE_STATUS_ERROR){
+		digitalWrite(PIN_OUTPUT_RED, OFF_FET);
+		digitalWrite(PIN_OUTPUT_YELLOW, ON_FET);
+		digitalWrite(PIN_OUTPUT_GREEN, OFF_FET);
+	}
+	else if(status == MACHINE_STATUS_RUN){
+		digitalWrite(PIN_OUTPUT_RED, OFF_FET);
+		digitalWrite(PIN_OUTPUT_YELLOW, OFF_FET);
+		digitalWrite(PIN_OUTPUT_GREEN, ON_FET);
+	}
+}
+
 void loadDataBegin(){
-    if(EEPROM.read(EEPROM_ADD_IS_SETUP_SLAVE_ID) == IS_INSTALLED){
-        setupSlave.isSetupSlaveId = true;
-        setupSlave.slaveId = EEPROM.read(EEPROM_ADD_SLAVE_ID);
-    }
-    Serial.print("SlaveId: ");
-    Serial.println(setupSlave.slaveId);
-    if(EEPROM.read(EEPROM_ADD_IS_SETUP_BUTTON_DEBOUNCE) == IS_INSTALLED){
-        OEEVars.ui16buttonDebounce = EEPROM.read(EEPROM_ADD_BUTTON_DEBOUNCE_HIGH);
-        OEEVars.ui16buttonDebounce = (OEEVars.ui16buttonDebounce << 8) | EEPROM.read(EEPROM_ADD_BUTTON_DEBOUNCE_LOW);
-    }
-    Serial.print("buttonDebounce: ");
-    Serial.println(OEEVars.ui16buttonDebounce);
-    if(EEPROM.read(EEPROM_ADD_IS_SETUP_INPUT_DEBOUNCE) == IS_INSTALLED){
-        OEEVars.ui16inputDebounce = EEPROM.read(EEPROM_ADD_INPUT_DEBOUNCE_HIGH);
-        OEEVars.ui16inputDebounce = (OEEVars.ui16inputDebounce << 8) | EEPROM.read(EEPROM_ADD_INPUT_DEBOUNCE_LOW);
-    }
-    Serial.print("inputDebounce: ");
-    Serial.println(OEEVars.ui16inputDebounce);
-    if(EEPROM.read(EEPROM_ADD_IS_SETUP_COUNTER_DEBOUNCE) == IS_INSTALLED){
-        OEEVars.ui16CounterDebounce = EEPROM.read(EEPROM_ADD_COUNTER_DEBOUNCE_HIGH);
-        OEEVars.ui16CounterDebounce = (OEEVars.ui16CounterDebounce << 8) | EEPROM.read(EEPROM_ADD_COUNTER_DEBOUNCE_LOW);
-    }
-    Serial.print("CounterDebounce: ");
-    Serial.println(OEEVars.ui16CounterDebounce);
+	dataRegister.eCurrentMachineStatus = MACHINE_STATUS_UNKNOW;
+	showLedStatus(dataRegister.eCurrentMachineStatus);
+	dataRegister.count = EEPROM.read(EEPROM_COUNT) << 24
+						| EEPROM.read(EEPROM_COUNT+1) << 16
+						| EEPROM.read(EEPROM_COUNT+2) << 8
+						| EEPROM.read(EEPROM_COUNT+3);
+	Serial.print("Count: ");
+	Serial.println(dataRegister.count);
+	dataRegister.ng = EEPROM.read(EEPROM_NG) << 24
+						| EEPROM.read(EEPROM_NG+1) << 16
+						| EEPROM.read(EEPROM_NG+2) << 8
+						| EEPROM.read(EEPROM_NG+3);
+	Serial.print("NG: ");
+	Serial.println(dataRegister.ng);
+	dataRegister.runningNumber = EEPROM.read(EEPROM_RUNNING_NUMBER) << 24
+						| EEPROM.read(EEPROM_RUNNING_NUMBER+1) << 16
+						| EEPROM.read(EEPROM_RUNNING_NUMBER+2) << 8
+						| EEPROM.read(EEPROM_RUNNING_NUMBER+3);
+	Serial.print("Running_Number: ");
+	Serial.println(dataRegister.runningNumber);
+
+	setupConfig.slaveId = EEPROM.read(EEPROM_SLAVE_ID);
+	Serial.print("Slave ID: ");
+	Serial.println(setupConfig.slaveId);
+
+	setupConfig.modbusBaudrate = EEPROM.read(EEPROM_MODBUS_BAUDRATE) << 24
+						| EEPROM.read(EEPROM_MODBUS_BAUDRATE+1) << 16
+						| EEPROM.read(EEPROM_MODBUS_BAUDRATE+2) << 8
+						| EEPROM.read(EEPROM_MODBUS_BAUDRATE+3);
+	Serial.print("ModBus_Baudrate: ");
+	Serial.println(setupConfig.modbusBaudrate);
 }
+
 void initModbus(){
-	modBus.slave(setupSlave.slaveId);
-    for(int i = 0; i < MODBUS_DATA_BUFF_SIZE; i++){
-        modBus.addHreg(i);
-	    modBus.Hreg(i, 0);
-    }
-	modBus.Hreg(REG_SET_SLAVE_ID, setupSlave.slaveId);
-    modBus.Hreg(REG_SET_BUTTON_DEBOUNCE, OEEVars.ui16buttonDebounce);
-    modBus.Hreg(REG_SET_INPUT_DEBOUNCE, OEEVars.ui16inputDebounce);
-    modBus.Hreg(REG_SET_COUNTER_DEBOUNCE, OEEVars.ui16CounterDebounce);
+	modbus1.begin(&Serial1);
+	modbus1.slave(setupConfig.slaveId);
+	modbus1.setBaudrate(setupConfig.modbusBaudrate);
+	// modbus2.slave(setupConfig.slaveId);
+	// modbus2.setBaudrate(setupConfig.modbusBaudrate);
+	for(int i = REG_MODBUS_COUNT_H; i < REG_MODBUS_COUNT_H+50; i++){
+		modbus1.addHreg(i);
+		modbus1.Hreg(i, 0);
+		// modbus2.addHreg(i);
+		// modbus2.Hreg(i, 0);
+	}
 }
 
-void checkCommandModbus(){
-    if(setupSlave.slaveId != modBus.Hreg(REG_SET_SLAVE_ID)){
-        setupSlave.slaveId = modBus.Hreg(REG_SET_SLAVE_ID);
-        modBus.slave(setupSlave.slaveId);
-        EEPROM.write(EEPROM_ADD_IS_SETUP_SLAVE_ID, IS_INSTALLED);
-        EEPROM.write(EEPROM_ADD_SLAVE_ID, setupSlave.slaveId);
-        EEPROM.commit();
-        Serial.print("Set Slave ID: ");
-        Serial.println(setupSlave.slaveId);
-    }
-    if(OEEVars.ui16buttonDebounce != modBus.Hreg(REG_SET_BUTTON_DEBOUNCE)){
-        OEEVars.ui16buttonDebounce = modBus.Hreg(REG_SET_BUTTON_DEBOUNCE);
-        EEPROM.write(EEPROM_ADD_IS_SETUP_BUTTON_DEBOUNCE, IS_INSTALLED);
-        EEPROM.write(EEPROM_ADD_BUTTON_DEBOUNCE_HIGH, uint8_t(OEEVars.ui16buttonDebounce >> 8));
-        EEPROM.write(EEPROM_ADD_BUTTON_DEBOUNCE_LOW, uint8_t(OEEVars.ui16buttonDebounce));
-        EEPROM.commit();
-        Serial.print("Set buttonDebounce: ");
-        Serial.println(OEEVars.ui16buttonDebounce);
-    }
-    if(OEEVars.ui16inputDebounce != modBus.Hreg(REG_SET_INPUT_DEBOUNCE)){
-        OEEVars.ui16inputDebounce = modBus.Hreg(REG_SET_INPUT_DEBOUNCE);
-        EEPROM.write(EEPROM_ADD_IS_SETUP_INPUT_DEBOUNCE, IS_INSTALLED);
-        EEPROM.write(EEPROM_ADD_INPUT_DEBOUNCE_HIGH, uint8_t(OEEVars.ui16inputDebounce >> 8));
-        EEPROM.write(EEPROM_ADD_INPUT_DEBOUNCE_LOW, uint8_t(OEEVars.ui16inputDebounce));
-        EEPROM.commit();
-        Serial.print("Set inputDebounce: ");
-        Serial.println(OEEVars.ui16inputDebounce);
-    }
-    if(OEEVars.ui16CounterDebounce != modBus.Hreg(REG_SET_COUNTER_DEBOUNCE)){
-        OEEVars.ui16CounterDebounce = modBus.Hreg(REG_SET_COUNTER_DEBOUNCE);
-        EEPROM.write(EEPROM_ADD_IS_SETUP_COUNTER_DEBOUNCE, IS_INSTALLED);
-        EEPROM.write(EEPROM_ADD_COUNTER_DEBOUNCE_HIGH, uint8_t(OEEVars.ui16CounterDebounce >> 8));
-        EEPROM.write(EEPROM_ADD_COUNTER_DEBOUNCE_LOW, uint8_t(OEEVars.ui16CounterDebounce));
-        EEPROM.commit();
-        Serial.print("Set CounterDebounce: ");
-        Serial.println(OEEVars.ui16CounterDebounce);
-    }
-    if(modBus.Hreg(REG_RESET_ALL) == IS_INSTALLED){
-        Serial.print("Reset All");
-        modBus.Hreg(REG_RESET_ALL, NOT_INSTALLED);
-        // EEPROM.write(EEPROM_ADD_IS_SETUP_SLAVE_ID, NOT_INSTALLED);
-        // EEPROM.write(EEPROM_ADD_SLAVE_ID, SLAVE_ID_DEFAUT);
+String macID(){
+    uint8_t mac[WL_MAC_ADDR_LENGTH];
+    String macID;
+    WiFi.mode(WIFI_AP);
+    WiFi.softAPmacAddress(mac);
+    macID = String(mac[WL_MAC_ADDR_LENGTH - 2], HEX) + String(mac[WL_MAC_ADDR_LENGTH - 1], HEX);
+    macID.toUpperCase();
+    return macID;
+}
+void setupConfigMode(){
+    Serial.println("[WifiService][setupAP] Open AP....");
+    WiFi.softAPdisconnect();
+    WiFi.disconnect();
+    // server.close();
+    delay(500/portTICK_PERIOD_MS);
+    WiFi.mode(WIFI_AP);
+    // String SSID_AP_MODE = SSID_PRE_AP_MODE + macID();
+	String SSID_AP_MODE = SSID_PRE_AP_MODE + WiFi.softAPmacAddress();
+    WiFi.softAP(SSID_AP_MODE.c_str());
+    IPAddress APIP(192, 168, 4, 1);
+    IPAddress gateway(192, 168, 4, 1);
+    IPAddress subnet(255, 255, 255, 0);
+    WiFi.softAPConfig(APIP, gateway, subnet);
+    Serial.println(SSID_AP_MODE);
 
-        EEPROM.write(EEPROM_ADD_IS_SETUP_BUTTON_DEBOUNCE, NOT_INSTALLED);
-        OEEVars.ui16buttonDebounce = DEBOUNCE_BUTTON_DEFAUT;
-        modBus.Hreg(REG_SET_BUTTON_DEBOUNCE, OEEVars.ui16buttonDebounce);
-        EEPROM.write(EEPROM_ADD_BUTTON_DEBOUNCE_HIGH, uint8_t(DEBOUNCE_BUTTON_DEFAUT >> 8));
-        EEPROM.write(EEPROM_ADD_BUTTON_DEBOUNCE_LOW, uint8_t(DEBOUNCE_BUTTON_DEFAUT));
-
-        EEPROM.write(EEPROM_ADD_IS_SETUP_INPUT_DEBOUNCE, IS_INSTALLED);
-        OEEVars.ui16inputDebounce = DEBOUNCE_INPUT_DEFAUT;
-        modBus.Hreg(REG_SET_INPUT_DEBOUNCE, OEEVars.ui16inputDebounce);
-        EEPROM.write(EEPROM_ADD_INPUT_DEBOUNCE_HIGH, uint8_t(DEBOUNCE_INPUT_DEFAUT >> 8));
-        EEPROM.write(EEPROM_ADD_INPUT_DEBOUNCE_LOW, uint8_t(DEBOUNCE_INPUT_DEFAUT));
-
-        EEPROM.write(EEPROM_ADD_IS_SETUP_COUNTER_DEBOUNCE, IS_INSTALLED);
-        OEEVars.ui16CounterDebounce = DEBOUNCE_COUNTER_DEFAUT;
-        modBus.Hreg(REG_SET_COUNTER_DEBOUNCE, OEEVars.ui16CounterDebounce);
-        EEPROM.write(EEPROM_ADD_COUNTER_DEBOUNCE_HIGH, uint8_t(DEBOUNCE_COUNTER_DEFAUT >> 8));
-        EEPROM.write(EEPROM_ADD_COUNTER_DEBOUNCE_LOW, uint8_t(DEBOUNCE_COUNTER_DEFAUT));
-        EEPROM.commit();
-    }
-
-    if(modBus.Hreg(REG_SYNC_DATA) == IS_INSTALLED){
-        modBus.Hreg(REG_SYNC_DATA, NOT_INSTALLED);
-        syncData.isSyncData = true;
-        OEEVars.ui16SyncProductCounter = modBus.Hreg(REG_SYNC_ACTUAL);
-        OEEVars.i32SyncRunningTimeCounter = (modBus.Hreg(REG_SYNC_RUNNING_TIME_HIGH) << 16) | modBus.Hreg(REG_SYNC_RUNNING_TIME_LOW);
-        OEEVars.i16SyncDoneChangeMold = modBus.Hreg(REG_SYNC_DONE_CHANGE_MOLD);
-        OEEVars.i32SyncUpTime = (modBus.Hreg(REG_SYNC_TOTAL_TIME_HIGH) << 16) | modBus.Hreg(REG_SYNC_TOTAL_TIME_LOW);
-        Serial.println("Sync Data");
-        Serial.print("SyncProductCounter: ");
-        Serial.println(OEEVars.ui16SyncProductCounter);
-        Serial.print("SyncRunningTimeCounter: ");
-        Serial.println(OEEVars.i32SyncRunningTimeCounter);
-        Serial.print("SyncDoneChangeMold: ");
-        Serial.println(OEEVars.i16SyncDoneChangeMold);
-        Serial.print("SyncUpTime: ");
-        Serial.println(OEEVars.i32SyncUpTime);
-    }
-
+    Serial.println("[WifiService][setupAP] Softap is running!");
+    IPAddress myIP = WiFi.softAPIP();
+    Serial.print("[WifiService][setupAP] IP address: ");
+    Serial.println(myIP);
 }
 
-void resetOEE(){
-    Serial.println("Reset OEE");
-    setupSlave.slaveId = SLAVE_ID_DEFAUT;
-    modBus.slave(setupSlave.slaveId);
-    EEPROM.write(EEPROM_ADD_IS_SETUP_SLAVE_ID, NOT_INSTALLED);
-    EEPROM.write(EEPROM_ADD_SLAVE_ID, setupSlave.slaveId);
-    modBus.Hreg(REG_SET_SLAVE_ID, setupSlave.slaveId);
-
-    OEEVars.ui16buttonDebounce = DEBOUNCE_BUTTON_DEFAUT;
-    EEPROM.write(EEPROM_ADD_IS_SETUP_BUTTON_DEBOUNCE, NOT_INSTALLED);
-    EEPROM.write(EEPROM_ADD_BUTTON_DEBOUNCE_HIGH, uint8_t(OEEVars.ui16buttonDebounce >> 8));
-    EEPROM.write(EEPROM_ADD_BUTTON_DEBOUNCE_LOW, uint8_t(OEEVars.ui16buttonDebounce));
-    modBus.Hreg(REG_SET_BUTTON_DEBOUNCE, OEEVars.ui16buttonDebounce);
-
-    OEEVars.ui16inputDebounce = DEBOUNCE_INPUT_DEFAUT;
-    EEPROM.write(EEPROM_ADD_IS_SETUP_INPUT_DEBOUNCE, NOT_INSTALLED);
-    EEPROM.write(EEPROM_ADD_INPUT_DEBOUNCE_HIGH, uint8_t(OEEVars.ui16inputDebounce >> 8));
-    EEPROM.write(EEPROM_ADD_INPUT_DEBOUNCE_LOW, uint8_t(OEEVars.ui16inputDebounce));
-    modBus.Hreg(REG_SET_INPUT_DEBOUNCE, OEEVars.ui16inputDebounce);
-
-    OEEVars.ui16CounterDebounce = DEBOUNCE_COUNTER_DEFAUT;
-    EEPROM.write(EEPROM_ADD_IS_SETUP_COUNTER_DEBOUNCE, IS_INSTALLED);
-    EEPROM.write(EEPROM_ADD_COUNTER_DEBOUNCE_HIGH, uint8_t(OEEVars.ui16CounterDebounce >> 8));
-    EEPROM.write(EEPROM_ADD_COUNTER_DEBOUNCE_LOW, uint8_t(OEEVars.ui16CounterDebounce));
-    modBus.Hreg(REG_SET_COUNTER_DEBOUNCE, OEEVars.ui16CounterDebounce);
-
-
-    EEPROM.commit();
+void handleRoot(){
+  char index_html[2048];
+  snprintf_P(index_html, sizeof(index_html), index_html_handle_root, 
+				setupConfig.slaveId, setupConfig.modbusBaudrate);
+  server.send(200, "text/html", index_html);
 }
 
-uint32_t getUpTime(){
-    return millis()/1000;
-}
-
-void TaskReadInput(void *pvParameters){
-    uint32_t time_reset_mc = 0;
-    for(;;){
-        if(!digitalRead(PIN_INPUT_RUN_STATUS)){
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-            OEEVars.eCurrentMachineStatus = MACHINE_STATUS_EXECUTE;
+void configModbus(){
+	for (uint8_t i = 0; i < server.args(); i++) {
+        if(server.argName(i) == "slave_id" && server.arg(i) != ""){
+			String slaveIdStr = server.arg(i);
+			setupConfig.slaveId = slaveIdStr.toInt();
+			modbus1.slave(setupConfig.slaveId);
+			// modbus2.slave(setupConfig.slaveId);
+			Serial.print("Slave ID: ");
+			Serial.println(setupConfig.slaveId);
+			EEPROM.write(EEPROM_SLAVE_ID, setupConfig.slaveId);
+			EEPROM.commit();
         }
-        else if(!digitalRead(PIN_INPUT_IDLE_STATUS)){
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-            OEEVars.eCurrentMachineStatus = MACHINE_STATUS_IDLE;
+		if(server.argName(i) == "baudrate" && server.arg(i) != ""){
+			String modbusBaudrateStr = server.arg(i);
+			setupConfig.modbusBaudrate = modbusBaudrateStr.toInt();
+			modbus1.setBaudrate(setupConfig.modbusBaudrate);
+			// modbus2.setBaudrate(setupConfig.modbusBaudrate);
+			Serial.print("ModBus_Baudrate: ");
+			Serial.println(setupConfig.modbusBaudrate);
+			EEPROM.write(EEPROM_MODBUS_BAUDRATE, setupConfig.modbusBaudrate >> 24);
+			EEPROM.write(EEPROM_MODBUS_BAUDRATE+1, setupConfig.modbusBaudrate >> 16);
+			EEPROM.write(EEPROM_MODBUS_BAUDRATE+2, setupConfig.modbusBaudrate >> 8);
+			EEPROM.write(EEPROM_MODBUS_BAUDRATE+3, setupConfig.modbusBaudrate);
+			EEPROM.commit();
         }
-        else if(!digitalRead(PIN_INPUT_ERROR_STATUS)){
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-            OEEVars.eCurrentMachineStatus = MACHINE_STATUS_ERROR;
-        }
-        else{
-            OEEVars.eCurrentMachineStatus = MACHINE_STATUS_NA;
-        }
-        modBus.Hreg(REG_MC_STATUS, OEEVars.eCurrentMachineStatus);
-
-        if(!digitalRead(PIN_INPUT_START_CHANGE_MOLD)){
-            digitalWrite(PIN_OUTPUT_CHANGEMOLD_STATUS, HIGH);
-            vTaskDelay(OEEVars.ui16inputDebounce / portTICK_PERIOD_MS);
-            
-        }
-        if(!digitalRead(PIN_INPUT_STOP_CHANGE_MOLD)){
-            digitalWrite(PIN_OUTPUT_CHANGEMOLD_STATUS, LOW);
-            vTaskDelay(OEEVars.ui16inputDebounce / portTICK_PERIOD_MS);
-            while(!digitalRead(PIN_INPUT_STOP_CHANGE_MOLD)){
-            }
-            OEEVars.i16DoneChangeMold++;
-        }
-
-        if(!digitalRead(PIN_INPUT_RESET_MC)){
-            if(millis() - time_reset_mc >= 5000){
-                time_reset_mc = millis();
-                resetOEE();
-            }
-        }
-        else{
-            time_reset_mc = millis();
-        }
-
-        if(OEEVars.ePreviousMachineStatus != OEEVars.eCurrentMachineStatus){
-            OEEVars.ePreviousMachineStatus = OEEVars.eCurrentMachineStatus;
-            if(OEEVars.eCurrentMachineStatus == MACHINE_STATUS_EXECUTE){
-                OEEVars.ui32LastMachineExecuteStatusTime = getUpTime();
-            }else{
-                OEEVars.i32RunningTimePrevious = OEEVars.i32RunningTimeCounter;
-            }
-        }
-        if(OEEVars.eCurrentMachineStatus == MACHINE_STATUS_EXECUTE){
-            OEEVars.i32PartialRunningTimeCounter = getUpTime() - OEEVars.ui32LastMachineExecuteStatusTime;
-            OEEVars.i32RunningTimeCounter = OEEVars.i32RunningTimePrevious + OEEVars.i32PartialRunningTimeCounter;
-        }
-
-        if(syncData.isSyncData){
-            modBus.Hreg(REG_ACTUAL, OEEVars.ui16SyncProductCounter + OEEVars.ui16ProductCounter);
-            modBus.Hreg(REG_RUNNING_TIME_HIGH, (OEEVars.i32SyncRunningTimeCounter + OEEVars.i32RunningTimeCounter)>>16);
-            modBus.Hreg(REG_RUNNING_TIME_HIGH, OEEVars.i32SyncRunningTimeCounter + OEEVars.i32RunningTimeCounter);
-            modBus.Hreg(REG_TOTAL_TIME_HIGH, (OEEVars.i32SyncUpTime + getUpTime())>>16);
-            modBus.Hreg(REG_TOTAL_TIME_LOW, OEEVars.i32SyncUpTime + getUpTime());
-            modBus.Hreg(REG_DONE_CHANGE_MOLD, OEEVars.i16SyncDoneChangeMold + OEEVars.i16DoneChangeMold);
-            modBus.Hreg(REG_MC_STATUS, OEEVars.eCurrentMachineStatus);
-        }
-        vTaskDelay(10/portTICK_PERIOD_MS); 
     }
+    char index_html[2048];
+	snprintf_P(index_html, sizeof(index_html), index_html_handle_root, 
+				setupConfig.slaveId, setupConfig.modbusBaudrate);
+  	server.send(200, "text/html", index_html);
 }
 
-void TaskReadCounter(void *pvParameters){
-    for(;;){
-        if(!digitalRead(PIN_INPUT_COUNTER)){
-            vTaskDelay(OEEVars.ui16CounterDebounce / portTICK_PERIOD_MS);
-            OEEVars.ui16ProductCounter ++;
-            // modBus.Hreg(REG_ACTUAL, OEEVars.ui16ProductCounter);
+void resetData(){
+	resetDataOee();
+    char index_html[2048];
+	snprintf_P(index_html, sizeof(index_html), index_html_handle_root, 
+				setupConfig.slaveId, setupConfig.modbusBaudrate);
+  	server.send(200, "text/html", index_html);
+}
+
+void startWebServer(){
+  server.on("/", HTTP_GET, handleRoot);
+  server.on("/config_modbus", HTTP_GET, configModbus);
+  server.on("/reset_data", HTTP_GET, resetData);
+//   server.onNotFound(notFound);
+  server.begin();
+  Serial.println( "HTTP server started" );
+}
+
+void resetDataOee(){
+	Serial.println("Reset Data!!!");
+	dataRegister.count = 0;;
+	modbus1.Hreg(REG_MODBUS_COUNT_H, dataRegister.count >> 16);
+	modbus1.Hreg(REG_MODBUS_COUNT_L, dataRegister.count);
+	// modbus2.Hreg(REG_MODBUS_COUNT_H, dataRegister.count >> 16);
+	// modbus2.Hreg(REG_MODBUS_COUNT_L, dataRegister.count);
+	EEPROM.write(EEPROM_COUNT, dataRegister.count >> 24);
+	EEPROM.write(EEPROM_COUNT+1, dataRegister.count >> 16);
+	EEPROM.write(EEPROM_COUNT+2, dataRegister.count >> 8);
+	EEPROM.write(EEPROM_COUNT+3, dataRegister.count);
+
+	dataRegister.ng = 0;
+	modbus1.Hreg(REG_MODBUS_NG_H, dataRegister.ng >> 16);
+	modbus1.Hreg(REG_MODBUS_NG_L, dataRegister.ng);
+	// modbus2.Hreg(REG_MODBUS_NG_H, dataRegister.ng >> 16);
+	// modbus2.Hreg(REG_MODBUS_NG_L, dataRegister.ng);
+	EEPROM.write(EEPROM_NG, dataRegister.ng >> 24);
+	EEPROM.write(EEPROM_NG+1, dataRegister.ng >> 16);
+	EEPROM.write(EEPROM_NG+2, dataRegister.ng >> 8);
+	EEPROM.write(EEPROM_NG+3, dataRegister.ng);
+
+	dataRegister.runningNumber = 0;
+	modbus1.Hreg(REG_MODBUS_RUNNING_NUMBER_H, dataRegister.runningNumber >> 16);
+	modbus1.Hreg(REG_MODBUS_RUNNING_NUMBER_L, dataRegister.runningNumber);
+	// modbus2.Hreg(REG_MODBUS_RUNNING_NUMBER_H, dataRegister.runningNumber >> 16);
+	// modbus2.Hreg(REG_MODBUS_RUNNING_NUMBER_L, dataRegister.runningNumber);
+	EEPROM.write(EEPROM_RUNNING_NUMBER, dataRegister.runningNumber >> 24);
+	EEPROM.write(EEPROM_RUNNING_NUMBER+1, dataRegister.runningNumber >> 16);
+	EEPROM.write(EEPROM_RUNNING_NUMBER+2, dataRegister.runningNumber >> 8);
+	EEPROM.write(EEPROM_RUNNING_NUMBER+3, dataRegister.runningNumber);
+	EEPROM.commit();
+}
+
+void checkButtonConfigClick(){
+    if(digitalRead(PIN_INPUT_CONFIG) == BTN_PRESSED){
+        if(millis() - setupConfig.timeCheckTurnOnConfig >= CONFIG_HOLD_TIME){
+			setupConfig.turnOnApMode = true;
+			setupConfig.timeCheckTurnOffConfig  = millis();
+            setupConfig.timeCheckTurnOnConfig = millis();
+            setupConfigMode();
+            startWebServer();
         }
-        vTaskDelay(10/ portTICK_PERIOD_MS); 
     }
+    else{
+        setupConfig.timeCheckTurnOnConfig = millis();
+    }
+
+	if(setupConfig.turnOnApMode){
+		if(WiFi.softAPgetStationNum() == 0){
+			if(millis() - setupConfig.timeCheckTurnOffConfig >= TIME_TURN_OFF_WIFI){
+				WiFi.softAPdisconnect();
+				setupConfig.turnOnApMode = false;
+			}
+		}
+		else{
+			setupConfig.timeCheckTurnOffConfig = millis();
+		}
+	}
 }
 
 void printData(){
-    Serial.print("SlaveID: ");
-    Serial.print(setupSlave.slaveId);
-    Serial.print(", Actual: ");
-    Serial.print(OEEVars.ui16SyncProductCounter + OEEVars.ui16ProductCounter);
-    Serial.print(", RunTime: ");
-    Serial.print(OEEVars.i32SyncRunningTimeCounter + OEEVars.i32RunningTimeCounter);
-    Serial.print(", MCStatus: ");
-    Serial.print(OEEVars.eCurrentMachineStatus);
-    Serial.print(", RunningNumber: ");
-    Serial.print(OEEVars.i16SyncDoneChangeMold + OEEVars.i16DoneChangeMold);
-    Serial.print(", UpTime: ");
-    Serial.println(OEEVars.i32SyncUpTime + getUpTime());
+	Serial.print("Count: ");
+	Serial.print(dataRegister.count);
+	Serial.print(" - Status: ");
+	switch (dataRegister.eCurrentMachineStatus)
+	{
+	case MACHINE_STATUS_RUN:
+		Serial.print("Run");
+		break;
+	case MACHINE_STATUS_IDLE:
+		Serial.print("Idle");
+		break;
+	case MACHINE_STATUS_ERROR:
+		Serial.print("Error");
+		break;
+	case MACHINE_STATUS_UNKNOW:
+		Serial.print("Unknow");
+		break;
+	default:
+		break;
+	}
+	Serial.print(" - NG: ");
+	Serial.print(dataRegister.ng);
+	Serial.print(" - Running_Number: ");
+	Serial.println(dataRegister.runningNumber);
 }
-
 
 void setup() {
+    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable   detector
 	Serial.begin(115200, SERIAL_8N1);
-	Serial1.begin(9600, SERIAL_8N1, PIN_RX_MODBUS, PIN_TX_MODBUS);
-	EEPROM.begin(512);
-    pinMode(PIN_INPUT_COUNTER, INPUT);
-    pinMode(PIN_INPUT_RUN_STATUS, INPUT);
-    pinMode(PIN_INPUT_IDLE_STATUS, INPUT);
-    pinMode(PIN_INPUT_ERROR_STATUS, INPUT);
-    pinMode(PIN_INPUT_RESET_MC, INPUT);
-    pinMode(PIN_INPUT_START_CHANGE_MOLD, INPUT);
-    pinMode(PIN_INPUT_STOP_CHANGE_MOLD, INPUT);
-    pinMode(PIN_INPUT_RESET_SLAVE_ID, INPUT);
-    pinMode(PIN_OUTPUT_CHANGEMOLD_STATUS, OUTPUT);
-#if defined(ESP32) || defined(ESP8266)
-	modBus.begin(&Serial1);
-#else
-	modBus.begin(&Serial1);
-	//modBus.begin(&Serial1, RXTX_PIN);  //or use RX/TX direction control pin (if required)
-	modBus.setBaudrate(9600);
-#endif
-
+	Serial1.begin(9600, SERIAL_8N1, PIN_MODBUS_RX, PIN_MODBUS_TX);
+	EEPROM.begin(256);
+	pinMode(PIN_OUTPUT_RED, OUTPUT);
+	pinMode(PIN_OUTPUT_YELLOW, OUTPUT);
+	pinMode(PIN_OUTPUT_GREEN, OUTPUT);
+	pinMode(PIN_OUTPUT_4, OUTPUT);
+	pinMode(PIN_INPUT_COUNT, 			INPUT);
+	pinMode(PIN_INPUT_RUN, 				INPUT);
+	pinMode(PIN_INPUT_IDLE, 			INPUT);
+	pinMode(PIN_INPUT_ERROR, 			INPUT);
+	pinMode(PIN_INPUT_NG, 				INPUT);
+	pinMode(PIN_INPUT_RUNNING_NUMBER, 	INPUT);
+	pinMode(PIN_INPUT_CONFIG, 			INPUT);
+	delay(100/portTICK_PERIOD_MS);
+	digitalWrite(PIN_OUTPUT_RED, OFF_FET);
+	digitalWrite(PIN_OUTPUT_YELLOW, OFF_FET);
+	digitalWrite(PIN_OUTPUT_GREEN, OFF_FET); 
+	digitalWrite(PIN_OUTPUT_4, OFF_FET);
+	delay(100/portTICK_PERIOD_MS);
 	loadDataBegin();
-    initModbus();
-	// ds3231_clock.begin();
+	initModbus();
 
-    xTaskCreatePinnedToCore(
-    TaskReadInput,    /* Function to implement the task */
-    "TaskReadInput",  /* Name of the task */
-    4096,             /* Stack size in words */
-    NULL,             /* Task input parameter */
-    0,                /* Priority of the task */
-    NULL,             /* Task handle. */
-    0);               /* Core where the task should run */
-
-    xTaskCreatePinnedToCore(
-    TaskReadCounter,    /* Function to implement the task */
-    "OEEDefaultTask",  /* Name of the task */
-    4096,             /* Stack size in words */
-    NULL,             /* Task input parameter */
-    0,                /* Priority of the task */
-    NULL,             /* Task handle. */
-    0);               /* Core where the task should run */
-  
+	xTaskCreatePinnedToCore(
+		checkInputCount,    /* Function to implement the task */
+		"checkInputCount",  /* Name of the task */
+		4096,             /* Stack size in words */
+		NULL,             /* Task input parameter */
+		0,                /* Priority of the task */
+		NULL,             /* Task handle. */
+		0);               /* Core where the task should run */
+	xTaskCreatePinnedToCore(
+		checkInputMCStatus,    /* Function to implement the task */
+		"checkInputMCStatus",  /* Name of the task */
+		4096,             /* Stack size in words */
+		NULL,             /* Task input parameter */
+		0,                /* Priority of the task */
+		NULL,             /* Task handle. */
+		0);               /* Core where the task should run */
+	xTaskCreatePinnedToCore(
+		checkInputNG,    /* Function to implement the task */
+		"checkInputNG",  /* Name of the task */
+		4096,             /* Stack size in words */
+		NULL,             /* Task input parameter */
+		0,                /* Priority of the task */
+		NULL,             /* Task handle. */
+		0);               /* Core where the task should run */
+	xTaskCreatePinnedToCore(
+		checkInputRunningNumber,    /* Function to implement the task */
+		"checkInputRunningNumber",  /* Name of the task */
+		4096,             /* Stack size in words */
+		NULL,             /* Task input parameter */
+		0,                /* Priority of the task */
+		NULL,             /* Task handle. */
+		0);               /* Core where the task should run */
 }
 
-uint32_t timePrint = 0;
 void loop() {
-    checkCommandModbus();
-	modBus.task();
-    vTaskDelay(10/ portTICK_PERIOD_MS);
-    if(millis() - timePrint > 5000){
-        timePrint = millis();
-        if(syncData.isSyncData){
-            printData();
-        }
-    }
+	checkButtonConfigClick();
+	modbus1.task();
+	// modbus2.task();
+	if(millis() - setupConfig.timePrintData >= TIME_PRINT_DATA){
+		setupConfig.timePrintData = millis();
+		printData();
+	}
+
 	yield();
+	server.handleClient();
+	vTaskDelay(10/portTICK_PERIOD_MS);
 }
