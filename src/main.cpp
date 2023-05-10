@@ -39,8 +39,8 @@
 #define PIN_MODBUS_RX         		16
 #define PIN_MODBUS_TX         		17
 
-#define PIN_MODBUS_RX_2        		16
-#define PIN_MODBUS_TX_2        		17
+#define PIN_MODBUS_RX_2        		9
+#define PIN_MODBUS_TX_2        		10
 
 #define ON_FET      HIGH
 #define OFF_FET     LOW
@@ -64,13 +64,14 @@ enum{
 	// REG_MODBUS_NG_L 			= 4499,
 	// REG_MODBUS_RUNNING_NUMBER_H = 4501,
 	// REG_MODBUS_RUNNING_NUMBER_L = 4502
-	REG_MODBUS_COUNT_H 			= 2496,
-	REG_MODBUS_COUNT_L 			= 2497,
-	REG_MODBUS_STATUS 			= 2500,
-	REG_MODBUS_NG_H 			= 2498,
-	REG_MODBUS_NG_L 			= 2499,
-	REG_MODBUS_RUNNING_NUMBER_H = 2501,
-	REG_MODBUS_RUNNING_NUMBER_L = 2502
+	REG_MODBUS_COUNT_H 			= 0,
+	REG_MODBUS_COUNT_L 			,
+	REG_MODBUS_STATUS 			,
+	REG_MODBUS_NG_H 			,
+	REG_MODBUS_NG_L 			,
+	REG_MODBUS_RUNNING_NUMBER_H ,
+	REG_MODBUS_RUNNING_NUMBER_L ,
+	REG_MODBUS_ADDING_START		= 10
 };
 
 typedef enum{
@@ -145,8 +146,8 @@ void checkInputCount(void *pvParameters){
 			dataRegister.count++;
 			modbus1.Hreg(REG_MODBUS_COUNT_H, dataRegister.count >> 16);
 			modbus1.Hreg(REG_MODBUS_COUNT_L, dataRegister.count);
-			// modbus2.Hreg(REG_MODBUS_COUNT_H, dataRegister.count >> 16);
-			// modbus2.Hreg(REG_MODBUS_COUNT_L, dataRegister.count);
+			modbus2.Hreg(REG_MODBUS_COUNT_H, dataRegister.count >> 16);
+			modbus2.Hreg(REG_MODBUS_COUNT_L, dataRegister.count);
 			EEPROM.write(EEPROM_COUNT, dataRegister.count >> 24);
 			EEPROM.write(EEPROM_COUNT+1, dataRegister.count >> 16);
 			EEPROM.write(EEPROM_COUNT+2, dataRegister.count >> 8);
@@ -162,19 +163,19 @@ void checkInputMCStatus(void *pvParameters){
 		if(digitalRead(PIN_INPUT_RUN) == BTN_PRESSED && dataRegister.eCurrentMachineStatus != MACHINE_STATUS_RUN){
 			dataRegister.eCurrentMachineStatus = MACHINE_STATUS_RUN;
 			modbus1.Hreg(REG_MODBUS_STATUS, dataRegister.eCurrentMachineStatus);
-			// modbus2.Hreg(REG_MODBUS_STATUS, dataRegister.eCurrentMachineStatus);
+			modbus2.Hreg(REG_MODBUS_STATUS, dataRegister.eCurrentMachineStatus);
 			showLedStatus(dataRegister.eCurrentMachineStatus);
 		}
 		else if(digitalRead(PIN_INPUT_IDLE) == BTN_PRESSED && dataRegister.eCurrentMachineStatus != MACHINE_STATUS_IDLE){
 			dataRegister.eCurrentMachineStatus = MACHINE_STATUS_IDLE;
 			modbus1.Hreg(REG_MODBUS_STATUS, dataRegister.eCurrentMachineStatus);
-			// modbus2.Hreg(REG_MODBUS_STATUS, dataRegister.eCurrentMachineStatus);
+			modbus2.Hreg(REG_MODBUS_STATUS, dataRegister.eCurrentMachineStatus);
 			showLedStatus(dataRegister.eCurrentMachineStatus);
 		}
 		else if(digitalRead(PIN_INPUT_ERROR) == BTN_PRESSED && dataRegister.eCurrentMachineStatus != MACHINE_STATUS_ERROR){
 			dataRegister.eCurrentMachineStatus = MACHINE_STATUS_ERROR;
 			modbus1.Hreg(REG_MODBUS_STATUS, dataRegister.eCurrentMachineStatus);
-			// modbus2.Hreg(REG_MODBUS_STATUS, dataRegister.eCurrentMachineStatus);
+			modbus2.Hreg(REG_MODBUS_STATUS, dataRegister.eCurrentMachineStatus);
 			showLedStatus(dataRegister.eCurrentMachineStatus);
 		}
 		vTaskDelay(100/portTICK_PERIOD_MS); 
@@ -191,8 +192,8 @@ void checkInputNG(void *pvParameters){
 			dataRegister.ng++;
 			modbus1.Hreg(REG_MODBUS_NG_H, dataRegister.ng >> 16);
 			modbus1.Hreg(REG_MODBUS_NG_L, dataRegister.ng);
-			// modbus2.Hreg(REG_MODBUS_NG_H, dataRegister.ng >> 16);
-			// modbus2.Hreg(REG_MODBUS_NG_L, dataRegister.ng);
+			modbus2.Hreg(REG_MODBUS_NG_H, dataRegister.ng >> 16);
+			modbus2.Hreg(REG_MODBUS_NG_L, dataRegister.ng);
 			EEPROM.write(EEPROM_NG, dataRegister.ng >> 24);
 			EEPROM.write(EEPROM_NG+1, dataRegister.ng >> 16);
 			EEPROM.write(EEPROM_NG+2, dataRegister.ng >> 8);
@@ -213,8 +214,8 @@ void checkInputRunningNumber(void *pvParameters){
 			dataRegister.runningNumber++;
 			modbus1.Hreg(REG_MODBUS_RUNNING_NUMBER_H, dataRegister.runningNumber >> 16);
 			modbus1.Hreg(REG_MODBUS_RUNNING_NUMBER_L, dataRegister.runningNumber);
-			// modbus2.Hreg(REG_MODBUS_RUNNING_NUMBER_H, dataRegister.runningNumber >> 16);
-			// modbus2.Hreg(REG_MODBUS_RUNNING_NUMBER_L, dataRegister.runningNumber);
+			modbus2.Hreg(REG_MODBUS_RUNNING_NUMBER_H, dataRegister.runningNumber >> 16);
+			modbus2.Hreg(REG_MODBUS_RUNNING_NUMBER_L, dataRegister.runningNumber);
 			EEPROM.write(EEPROM_RUNNING_NUMBER, dataRegister.runningNumber >> 24);
 			EEPROM.write(EEPROM_RUNNING_NUMBER+1, dataRegister.runningNumber >> 16);
 			EEPROM.write(EEPROM_RUNNING_NUMBER+2, dataRegister.runningNumber >> 8);
@@ -278,33 +279,41 @@ void loadDataBegin(){
 }
 
 void initModbus(){
+	Serial1.end();
+	Serial2.end();
+	Serial1.begin(setupConfig.modbusBaudrate, SERIAL_8N1, PIN_MODBUS_RX, PIN_MODBUS_TX);
+	Serial2.begin(setupConfig.modbusBaudrate, SERIAL_8N1, PIN_MODBUS_RX_2, PIN_MODBUS_TX_2);
 	modbus1.begin(&Serial1);
+	modbus2.begin(&Serial2);
 	modbus1.slave(setupConfig.slaveId);
 	modbus1.setBaudrate(setupConfig.modbusBaudrate);
-	// modbus2.slave(setupConfig.slaveId);
-	// modbus2.setBaudrate(setupConfig.modbusBaudrate);
+	modbus2.slave(setupConfig.slaveId);
+	modbus2.setBaudrate(setupConfig.modbusBaudrate);
 
-	for(int i = 0; i <= REG_MODBUS_RUNNING_NUMBER_L; i++){
+	for(int i = 0; i <= REG_MODBUS_ADDING_START+100; i++){
 		modbus1.addHreg(i);
+		modbus1.Hreg(i,0);
+		modbus2.addHreg(i);
+		modbus2.Hreg(i,0);
 	}
 
 	modbus1.Hreg(REG_MODBUS_STATUS, dataRegister.eCurrentMachineStatus);
-	// modbus2.Hreg(REG_MODBUS_STATUS, dataRegister.eCurrentMachineStatus);
+	modbus2.Hreg(REG_MODBUS_STATUS, dataRegister.eCurrentMachineStatus);
 
 	modbus1.Hreg(REG_MODBUS_COUNT_H, dataRegister.count >> 16);
 	modbus1.Hreg(REG_MODBUS_COUNT_L, dataRegister.count);
-	// modbus2.Hreg(REG_MODBUS_COUNT_H, dataRegister.count >> 16);
-	// modbus2.Hreg(REG_MODBUS_COUNT_L, dataRegister.count);
+	modbus2.Hreg(REG_MODBUS_COUNT_H, dataRegister.count >> 16);
+	modbus2.Hreg(REG_MODBUS_COUNT_L, dataRegister.count);
 
 	modbus1.Hreg(REG_MODBUS_NG_H, dataRegister.ng >> 16);
 	modbus1.Hreg(REG_MODBUS_NG_L, dataRegister.ng);
-	// modbus2.Hreg(REG_MODBUS_NG_H, dataRegister.ng >> 16);
-	// modbus2.Hreg(REG_MODBUS_NG_L, dataRegister.ng);
+	modbus2.Hreg(REG_MODBUS_NG_H, dataRegister.ng >> 16);
+	modbus2.Hreg(REG_MODBUS_NG_L, dataRegister.ng);
 
 	modbus1.Hreg(REG_MODBUS_RUNNING_NUMBER_H, dataRegister.runningNumber >> 16);
 	modbus1.Hreg(REG_MODBUS_RUNNING_NUMBER_L, dataRegister.runningNumber);
-	// modbus2.Hreg(REG_MODBUS_RUNNING_NUMBER_H, dataRegister.runningNumber >> 16);
-	// modbus2.Hreg(REG_MODBUS_RUNNING_NUMBER_L, dataRegister.runningNumber);
+	modbus2.Hreg(REG_MODBUS_RUNNING_NUMBER_H, dataRegister.runningNumber >> 16);
+	modbus2.Hreg(REG_MODBUS_RUNNING_NUMBER_L, dataRegister.runningNumber);
 }
 
 String macID(){
@@ -351,7 +360,7 @@ void configModbus(){
 			String slaveIdStr = server.arg(i);
 			setupConfig.slaveId = slaveIdStr.toInt();
 			modbus1.slave(setupConfig.slaveId);
-			// modbus2.slave(setupConfig.slaveId);
+			modbus2.slave(setupConfig.slaveId);
 			Serial.print("Slave ID: ");
 			Serial.println(setupConfig.slaveId);
 			EEPROM.write(EEPROM_SLAVE_ID, setupConfig.slaveId);
@@ -360,8 +369,7 @@ void configModbus(){
 		if(server.argName(i) == "baudrate" && server.arg(i) != ""){
 			String modbusBaudrateStr = server.arg(i);
 			setupConfig.modbusBaudrate = modbusBaudrateStr.toInt();
-			modbus1.setBaudrate(setupConfig.modbusBaudrate);
-			// modbus2.setBaudrate(setupConfig.modbusBaudrate);
+			initModbus();
 			Serial.print("ModBus_Baudrate: ");
 			Serial.println(setupConfig.modbusBaudrate);
 			EEPROM.write(EEPROM_MODBUS_BAUDRATE, setupConfig.modbusBaudrate >> 24);
@@ -399,8 +407,8 @@ void resetDataOee(){
 	dataRegister.count = 0;;
 	modbus1.Hreg(REG_MODBUS_COUNT_H, dataRegister.count >> 16);
 	modbus1.Hreg(REG_MODBUS_COUNT_L, dataRegister.count);
-	// modbus2.Hreg(REG_MODBUS_COUNT_H, dataRegister.count >> 16);
-	// modbus2.Hreg(REG_MODBUS_COUNT_L, dataRegister.count);
+	modbus2.Hreg(REG_MODBUS_COUNT_H, dataRegister.count >> 16);
+	modbus2.Hreg(REG_MODBUS_COUNT_L, dataRegister.count);
 	EEPROM.write(EEPROM_COUNT, dataRegister.count >> 24);
 	EEPROM.write(EEPROM_COUNT+1, dataRegister.count >> 16);
 	EEPROM.write(EEPROM_COUNT+2, dataRegister.count >> 8);
@@ -409,8 +417,8 @@ void resetDataOee(){
 	dataRegister.ng = 0;
 	modbus1.Hreg(REG_MODBUS_NG_H, dataRegister.ng >> 16);
 	modbus1.Hreg(REG_MODBUS_NG_L, dataRegister.ng);
-	// modbus2.Hreg(REG_MODBUS_NG_H, dataRegister.ng >> 16);
-	// modbus2.Hreg(REG_MODBUS_NG_L, dataRegister.ng);
+	modbus2.Hreg(REG_MODBUS_NG_H, dataRegister.ng >> 16);
+	modbus2.Hreg(REG_MODBUS_NG_L, dataRegister.ng);
 	EEPROM.write(EEPROM_NG, dataRegister.ng >> 24);
 	EEPROM.write(EEPROM_NG+1, dataRegister.ng >> 16);
 	EEPROM.write(EEPROM_NG+2, dataRegister.ng >> 8);
@@ -419,8 +427,8 @@ void resetDataOee(){
 	dataRegister.runningNumber = 0;
 	modbus1.Hreg(REG_MODBUS_RUNNING_NUMBER_H, dataRegister.runningNumber >> 16);
 	modbus1.Hreg(REG_MODBUS_RUNNING_NUMBER_L, dataRegister.runningNumber);
-	// modbus2.Hreg(REG_MODBUS_RUNNING_NUMBER_H, dataRegister.runningNumber >> 16);
-	// modbus2.Hreg(REG_MODBUS_RUNNING_NUMBER_L, dataRegister.runningNumber);
+	modbus2.Hreg(REG_MODBUS_RUNNING_NUMBER_H, dataRegister.runningNumber >> 16);
+	modbus2.Hreg(REG_MODBUS_RUNNING_NUMBER_L, dataRegister.runningNumber);
 	EEPROM.write(EEPROM_RUNNING_NUMBER, dataRegister.runningNumber >> 24);
 	EEPROM.write(EEPROM_RUNNING_NUMBER+1, dataRegister.runningNumber >> 16);
 	EEPROM.write(EEPROM_RUNNING_NUMBER+2, dataRegister.runningNumber >> 8);
@@ -485,7 +493,6 @@ void printData(){
 void setup() {
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable   detector
 	Serial.begin(115200, SERIAL_8N1);
-	Serial1.begin(9600, SERIAL_8N1, PIN_MODBUS_RX, PIN_MODBUS_TX);
 	EEPROM.begin(256);
 	pinMode(PIN_OUTPUT_RED, OUTPUT);
 	pinMode(PIN_OUTPUT_YELLOW, OUTPUT);
@@ -544,7 +551,7 @@ void setup() {
 void loop() {
 	checkButtonConfigClick();
 	modbus1.task();
-	// modbus2.task();
+	modbus2.task();
 	if(millis() - setupConfig.timePrintData >= TIME_PRINT_DATA){
 		setupConfig.timePrintData = millis();
 		printData();
