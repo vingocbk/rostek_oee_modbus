@@ -274,6 +274,9 @@ void loadDataBegin(){
 						| EEPROM.read(EEPROM_MODBUS_BAUDRATE+1) << 16
 						| EEPROM.read(EEPROM_MODBUS_BAUDRATE+2) << 8
 						| EEPROM.read(EEPROM_MODBUS_BAUDRATE+3);
+	if(setupConfig.modbusBaudrate > 115200){
+		setupConfig.modbusBaudrate = 115200;
+	}
 	Serial.print("ModBus_Baudrate: ");
 	Serial.println(setupConfig.modbusBaudrate);
 }
